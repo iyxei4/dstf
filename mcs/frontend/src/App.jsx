@@ -652,12 +652,11 @@ function UserPortal() {
               <br />
               room count.
             </h1>
-            <p>Record what your classroom uses. Make every kilowatt count.</p>
+            <p>Record what your classroom uses. Make every energy count.</p>
             <div className="auth-aside-line" />
           </div>
           <form className="auth-form" onSubmit={signIn}>
-            <div className="eyebrow">User Portal</div>
-            <h2>Welcome back</h2>
+            <h2>Welcome!</h2>
             <p className="form-intro">
               Use the username and password provided by your administrator.
             </p>
