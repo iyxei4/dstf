@@ -643,7 +643,7 @@ function UserPortal() {
         />
         <section className="auth-layout">
           <div className="auth-aside">
-            <span className="auth-aside-number">01 / USER</span>
+            <span className="auth-aside-number">01 / @MCS</span>
             <div className="auth-aside-mark">
               <Zap size={30} fill="currentColor" />
             </div>
