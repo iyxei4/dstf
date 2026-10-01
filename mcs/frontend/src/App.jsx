@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
 import {
   Activity,
   ArrowDownRight,
@@ -35,6 +36,14 @@ import {
 } from "recharts";
 
 const API = "/api";
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabase =
+  supabaseUrl && supabaseAnonKey
+    ? createClient(supabaseUrl, supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      })
+    : null;
 const todayLabel = new Intl.DateTimeFormat("en-PH", {
   weekday: "long",
   month: "long",
@@ -208,6 +217,33 @@ function RoleChoice() {
       </footer>
     </main>
   );
+}
+
+// Subscribes to Supabase Realtime changes on a table and calls the latest
+// handler (debounced, so bursts of events trigger a single refresh). When the
+// env vars are missing or the handler is null, it stays inert.
+function useLiveTable(table, handler) {
+  const handlerRef = useRef(handler);
+  handlerRef.current = handler;
+  const active = Boolean(handler);
+  useEffect(() => {
+    if (!supabase || !active) return undefined;
+    let timer = null;
+    const channel = supabase
+      .channel(`live:${table}:${Math.random().toString(36).slice(2)}`)
+      .on("postgres_changes", { event: "*", schema: "public", table }, () => {
+        if (timer) return;
+        timer = window.setTimeout(() => {
+          timer = null;
+          if (handlerRef.current) handlerRef.current();
+        }, 700);
+      })
+      .subscribe();
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      supabase.removeChannel(channel);
+    };
+  }, [table, active]);
 }
 
 function SignupPage() {
@@ -472,6 +508,11 @@ function UserPortal() {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [running]);
+
+  useLiveTable(
+    "classroom_users",
+    signedIn ? () => loadWorkspace().catch(() => {}) : null,
+  );
 
   async function signIn(event) {
     event.preventDefault();
@@ -1167,6 +1208,24 @@ function AdminPortal() {
       })
       .catch(() => {});
   }, []);
+
+  useLiveTable(
+    "classroom_users",
+    admin
+      ? () => {
+          loadDashboard().catch(() => {});
+        }
+      : null,
+  );
+  useLiveTable(
+    "usage_records",
+    admin
+      ? () => {
+          loadDashboard().catch(() => {});
+          if (reports) loadReports().catch(() => {});
+        }
+      : null,
+  );
 
   async function signIn(event) {
     event.preventDefault();
