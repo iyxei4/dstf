@@ -1,53 +1,82 @@
-# Deploying WattWise MCS (Render + Supabase)
+# Deploying WattWise Classrooms (mcs)
 
-One Render web service builds the React frontend, serves it from FastAPI, and
-stores data in Supabase Postgres. **No secrets live in this repository** — every
-sensitive value is a `sync: false` or generated env var in `render.yaml`.
+**Live:** https://wattwise-classrooms.vercel.app
 
-## 1. Create the Supabase database (free)
+## Architecture (Vercel)
 
-1. Sign in at <https://supabase.com> → **New project** (choose a region near
-   your Render region, e.g. Singapore).
-2. Save the database password it asks for (this is the only DB secret).
-3. **Project Settings → Database → Connection string → Transaction pooler**:
-   - Host: `aws-0....pooler.supabase.com`
-   - Port: `6543`
-   - Database: `postgres`
-4. Build the URL Render will use (add the `+psycopg` driver):
+One project, two services (see `vercel.json`):
 
-   ```
-   postgresql+psycopg://postgres.<project-ref>:<db-password>@aws-0....pooler.supabase.com:6543/postgres?sslmode=require
-   ```
+| Service | Root          | What it is                              | Routing                    |
+| ------- | ------------- | --------------------------------------- | -------------------------- |
+| `web`   | `mcs/frontend` | Vite build → static files + SPA fallback | everything else `/(.*)`     |
+| `api`   | `mcs/backend`  | FastAPI serverless function (`app.main:app`) | `/api/(.*)`            |
 
-No migration step needed: on first boot the app runs `create_all` and its seed
-data into the empty database automatically.
+The function sees the **original path** (`/api/health` arrives as `/api/health`),
+so FastAPI routes need no prefix changes. Cookies are same-origin
+(`path=/api`, `samesite=strict`, `secure`) and work across both services.
 
-## 2. Create the Render service (free)
+The backend runs `create_all` + seed eagerly at import (serverless platforms may
+never fire FastAPI startup events) — see the end of `mcs/backend/app/main.py`.
 
-1. <https://dashboard.render.com> → **New → Blueprint** → connect the
-   `iyxei4/dstf` repo. Render reads `render.yaml` at the repo root.
-2. Before the first deploy, set the env vars Render marks as pending:
-   - `MCS_DATABASE_URL` — the Supabase URL from step 1
-   - `MCS_ADMIN_PASSWORD` — a strong admin password (local default `mcs2026`
-     is only a fallback; override it here)
-   - `MCS_SESSION_SECRET` — left as `generateValue: true` (Render stores it)
-3. Deploy. Build = `npm ci && npm run build` (frontend) + `pip install`
-   (backend); start = `uvicorn` serving both API and UI from one origin.
+## Environment variables (never committed)
 
-## 3. Verify
+Set with `vercel env add <NAME> production` or in the dashboard
+(Project → Settings → Environment Variables):
 
-- `GET /api/health` → `{"status":"ok"}`
-- `GET /mcs`, `/mcs/user`, `/mcs/admin` → the React app
-- Sign in to `/mcs/admin` with `MCS_ADMIN_USERNAME` / `MCS_ADMIN_PASSWORD`
-- Submit one usage record as a user, then check **Buildings & rooms** shows the
-  room's numbers (data now persists in Supabase)
+| Name                 | Purpose                                              |
+| -------------------- | ---------------------------------------------------- |
+| `MCS_DATABASE_URL`   | Postgres URL (Supabase). **See "Database" below.**   |
+| `MCS_SESSION_SECRET` | HMAC key for session cookies — random 64-char hex    |
+| `MCS_ADMIN_PASSWORD` | Admin login password                                 |
+| `MCS_ADMIN_USERNAME` | Admin login name (default `admin`)                   |
+| `MCS_SECURE_COOKIES` | `true` on Vercel (HTTPS)                             |
 
-## Notes
+`.gitignore` keeps `.env`, `*.db`, `.vercel/` and `solar-energy/` out of git;
+`.vercelignore` keeps them out of deploy uploads.
 
-- **Local dev is unchanged**: no `MCS_DATABASE_URL` ⇒ SQLite file at
-  `mcs/backend/wattwise.db`, `uvicorn --reload --port 8001` + Vite on 5174.
-- `MCS_SECURE_COOKIES` must be the string `true` (it is, via `render.yaml`);
-  cookies are `samesite=strict` and scoped to `/api`, same-origin by design.
-- SSL: Supabase URL must include `?sslmode=require`.
-- Free-tier note: Render free services spin down after idle; the first request
-  after idle takes ~30s. Data lives in Supabase, so redeploys never lose it.
+## Database — read this
+
+- **Now:** no `MCS_DATABASE_URL` → SQLite at `/tmp/wattwise.db`. The app works,
+  but **all data resets on every cold start** (each fresh instance re-seeds).
+- **For real data:** attach Supabase (free):
+  1. supabase.com → new project → Connect → **Transaction pooler** (port 6543)
+  2. Format (SQLAlchemy needs the `postgresql+psycopg` scheme):
+     `postgresql+psycopg://postgres.<ref>:<password>@aws-0.<region>.pooler.supabase.com:6543/postgres?sslmode=require`
+  3. `vercel env rm MCS_DATABASE_URL production` then
+     `vercel env add MCS_DATABASE_URL production` (paste the URL)
+  4. `vercel deploy --prod`
+
+  First boot against an empty database creates + seeds all tables itself.
+
+## Deploying
+
+```powershell
+npm install -g vercel   # once
+vercel login           # once (GitHub device flow)
+vercel link --project wattwise-classrooms   # once
+vercel deploy --prod
+```
+
+Local verification before deploying (optional):
+
+```powershell
+vercel pull --yes --environment production
+vercel build --yes --target production     # needs uv (https://astral.sh/uv)
+```
+
+**Auto-deploy on push:** run `vercel git connect` and pick `iyxei4/dstf` —
+every push to `main` then deploys automatically.
+
+## Deployment protection
+
+New Vercel projects wall deployments behind Vercel login. This project's wall
+was removed via `PATCH /v9/projects/... { "ssoProtection": null }`. If it ever
+reappears (dashboard: Settings → Deployment Protection → **Disabled** for
+public access), anonymous visitors get a login page instead of the app.
+
+## Alternative: Render + Supabase
+
+`render.yaml` (root) describes the same app as a single Render web service
+serving FastAPI + the built frontend — kept as a fallback. It needs
+`MCS_DATABASE_URL` (Supabase) and `MCS_ADMIN_PASSWORD` set in the Render
+dashboard; see the blueprint for details.

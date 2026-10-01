@@ -35,8 +35,10 @@ Thumbs.db
 # Installers / binaries
 *.exe
 
-# Vercel build artifact (copied from mcs/backend/app by installCommand)
-api/app/
+# Vercel local link config (account/project ids)
+.vercel/
 
 # Never push sibling project or workspace-only docs
 solar-energy/
+.vercel
+.env*

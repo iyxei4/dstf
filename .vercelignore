@@ -1,0 +1,10 @@
+# Files the Vercel upload should never include (mirrors .gitignore + policy)
+node_modules/
+dist/
+.git/
+.vercel/
+.env
+.env.local
+*.db
+api/app/
+solar-energy/
