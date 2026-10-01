@@ -79,7 +79,18 @@ class AdminLoginRequest(BaseModel):
 
 
 class SectionRequest(BaseModel):
-    name: str = Field(min_length=2, max_length=80)
+    grade: str = Field(min_length=1, max_length=2, pattern=r"^\d{1,2}$")
+    section_name: str = Field(min_length=2, max_length=40)
+
+
+class RegisterRequest(BaseModel):
+    username: str = Field(min_length=2, max_length=80)
+    password: str = Field(min_length=8, max_length=200)
+    section_id: int = Field(gt=0)
+
+
+class SectionAssignmentRequest(BaseModel):
+    section_id: int | None = Field(default=None, gt=0)
 
 
 class ApplianceRequest(BaseModel):
@@ -88,7 +99,9 @@ class ApplianceRequest(BaseModel):
 
 
 class UsageRequest(BaseModel):
-    section_id: int = Field(gt=0)
+    # Accepted for older clients but ignored: the account's own section
+    # (chosen at registration) is authoritative for every submission.
+    section_id: int | None = Field(default=None, gt=0)
     appliance_id: int = Field(gt=0)
     hours: float = Field(gt=0, le=24)
     room_id: int | None = Field(default=None, gt=0)
@@ -181,11 +194,18 @@ def require_user(
     user = db.scalar(select(ClassroomUser).where(ClassroomUser.username == username))
     if user is None or user.password_hash is None:
         raise HTTPException(status_code=401, detail="User credentials are no longer valid.")
+    if user.status != "active":
+        raise HTTPException(status_code=403, detail="This account is awaiting administrator approval.")
     return user
 
 
 def _section_dict(section: ClassroomSection) -> dict:
-    return {"id": section.id, "name": section.name}
+    return {
+        "id": section.id,
+        "name": section.name,
+        "grade": section.grade,
+        "section_name": section.section_name,
+    }
 
 
 def _appliance_dict(appliance: Appliance) -> dict:
@@ -247,6 +267,24 @@ def initialize_database() -> None:
             connection.exec_driver_sql(
                 "ALTER TABLE classroom_users ADD COLUMN assigned_room_id INTEGER REFERENCES classroom_rooms(id)"
             )
+        if "status" not in user_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE classroom_users ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'active'"
+            )
+        if "section_id" not in user_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE classroom_users ADD COLUMN section_id INTEGER REFERENCES classroom_sections(id)"
+            )
+    section_columns = {column["name"] for column in inspect(engine).get_columns("classroom_sections")}
+    with engine.begin() as connection:
+        if "grade" not in section_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE classroom_sections ADD COLUMN grade VARCHAR(4)"
+            )
+        if "section_name" not in section_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE classroom_sections ADD COLUMN section_name VARCHAR(40)"
+            )
     usage_columns = {column["name"] for column in inspect(engine).get_columns("usage_records")}
     if "room_id" not in usage_columns:
         with engine.begin() as connection:
@@ -274,9 +312,26 @@ def initialize_database() -> None:
     with SessionLocal() as db:
         if not db.scalar(select(ClassroomSection.id).limit(1)):
             db.add_all(
-                ClassroomSection(name=name)
-                for name in ("Grade 7 - Narra", "Grade 8 - Mahogany", "Grade 9 - Acacia")
+                ClassroomSection(
+                    name=f"{grade} - {section_name}",
+                    grade=grade,
+                    section_name=section_name,
+                )
+                for grade, section_name in (
+                    ("11", "BERNOULLI"),
+                    ("11", "ARISTOTLE"),
+                    ("12", "BERNOULLI"),
+                    ("12", "ARISTOTLE"),
+                )
             )
+        # Backfill structured fields for legacy rows created as "11 - BERNOULLI".
+        for section in db.scalars(select(ClassroomSection)):
+            if section.grade or not section.name:
+                continue
+            head, separator, tail = section.name.partition(" - ")
+            if separator and head.strip().isdigit() and tail.strip():
+                section.grade = head.strip()
+                section.section_name = tail.strip()
         if not db.scalar(select(Appliance.id).limit(1)):
             db.add_all(
                 Appliance(name=name, wattage=wattage)
@@ -306,6 +361,10 @@ def initialize_database() -> None:
                 for floor in range(1, 5)
                 for room_index in range(1, 6)
             )
+        # An early seed wrote "G11 BLDS"; heal any stale building labels.
+        for room in db.scalars(select(ClassroomRoom)):
+            if "BLDS" in room.building_name:
+                room.building_name = room.building_name.replace("BLDS", "BLDG")
         db.commit()
 
 
@@ -398,6 +457,8 @@ def user_login(
     user = db.scalar(select(ClassroomUser).where(func.lower(ClassroomUser.username) == username.lower()))
     if user is None or user.password_hash is None or not _verify_user_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Incorrect account name or password.")
+    if user.status != "active":
+        raise HTTPException(status_code=403, detail="Your account is awaiting administrator approval.")
     user.last_seen = utc_now()
     db.commit()
     session = _session_payload(user.username)
@@ -413,7 +474,40 @@ def user_login(
     room = db.get(ClassroomRoom, user.assigned_room_id) if user.assigned_room_id else None
     return {
         "username": user.username,
+        "section": _section_dict(user.section) if user.section else None,
         "assigned_room": _room_identity(room) if room else None,
+    }
+
+
+@app.post("/api/users/register", status_code=201)
+def register_user(payload: RegisterRequest, db: Session = Depends(get_db)) -> dict:
+    """Self-registration: the account starts as pending until an admin approves it."""
+    username = " ".join(payload.username.split())
+    if db.scalar(
+        select(ClassroomUser.id).where(func.lower(ClassroomUser.username) == username.lower())
+    ):
+        raise HTTPException(status_code=409, detail="That account name is already taken.")
+    section = db.get(ClassroomSection, payload.section_id)
+    if section is None:
+        raise HTTPException(status_code=404, detail="Choose an available classroom section.")
+    user = ClassroomUser(
+        username=username,
+        password_hash=_hash_user_password(payload.password),
+        section_id=section.id,
+        status="pending",
+    )
+    db.add(user)
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="That account name is already taken.") from error
+    db.refresh(user)
+    return {
+        "username": user.username,
+        "status": "pending",
+        "section": _section_dict(section),
+        "message": "Account created. An administrator must approve it before you can sign in.",
     }
 
 
@@ -431,6 +525,7 @@ def user_session(
     room = db.get(ClassroomRoom, user.assigned_room_id) if user.assigned_room_id else None
     return {
         "username": user.username,
+        "section": _section_dict(user.section) if user.section else None,
         "assigned_room": _room_identity(room) if room else None,
     }
 
@@ -442,7 +537,11 @@ def user_records(
 ) -> list[dict]:
     records = db.scalars(
         select(UsageRecord)
-        .where(UsageRecord.user_id == user.id)
+        .where(
+            UsageRecord.user_id == user.id,
+            # Recent entries only ever show the account's own classroom section.
+            UsageRecord.section_id == user.section_id,
+        )
         .options(joinedload(UsageRecord.user), joinedload(UsageRecord.section), joinedload(UsageRecord.appliance))
         .order_by(UsageRecord.created_at.desc())
         .limit(100)
@@ -457,11 +556,18 @@ def create_record(
     user: ClassroomUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    section = db.get(ClassroomSection, payload.section_id)
     appliance = db.get(Appliance, payload.appliance_id)
     room = db.get(ClassroomRoom, payload.room_id) if payload.room_id else None
-    if section is None or appliance is None or (payload.room_id and room is None):
-        raise HTTPException(status_code=404, detail="Choose an available section and appliance.")
+    if appliance is None or (payload.room_id and room is None):
+        raise HTTPException(status_code=404, detail="Choose an available appliance and room.")
+    # The section comes from the account (fixed at registration), not the payload.
+    if user.section_id is None:
+        raise HTTPException(
+            status_code=403, detail="Ask an administrator to set your classroom section first."
+        )
+    section = db.get(ClassroomSection, user.section_id)
+    if section is None:
+        raise HTTPException(status_code=403, detail="Your classroom section is no longer available.")
     if user.assigned_room_id is None:
         raise HTTPException(status_code=403, detail="Ask an administrator to assign your room first.")
     if payload.room_id != user.assigned_room_id:
@@ -561,6 +667,66 @@ def assign_user_room(
     }
 
 
+def _find_user(db: Session, username: str) -> ClassroomUser:
+    user = db.scalar(
+        select(ClassroomUser).where(func.lower(ClassroomUser.username) == username.lower())
+    )
+    if user is None:
+        raise HTTPException(status_code=404, detail="User account not found.")
+    return user
+
+
+@app.post("/api/admin/users/{username}/approve", dependencies=[Depends(require_admin)])
+def approve_user(username: str, db: Session = Depends(get_db)) -> dict:
+    user = _find_user(db, username)
+    if user.status == "active":
+        return {"username": user.username, "status": "active"}
+    if user.section_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Set this account's classroom section before approving it.",
+        )
+    user.status = "active"
+    db.commit()
+    return {"username": user.username, "status": "active"}
+
+
+@app.put("/api/admin/users/{username}/section", dependencies=[Depends(require_admin)])
+def assign_user_section(
+    username: str,
+    payload: SectionAssignmentRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    user = _find_user(db, username)
+    section = db.get(ClassroomSection, payload.section_id) if payload.section_id else None
+    if payload.section_id and section is None:
+        raise HTTPException(status_code=404, detail="Section not found.")
+    user.section_id = section.id if section else None
+    db.commit()
+    return {"username": user.username, "section": _section_dict(section) if section else None}
+
+
+@app.delete("/api/admin/users/{username}", dependencies=[Depends(require_admin)])
+def delete_user(username: str, db: Session = Depends(get_db)) -> dict[str, str]:
+    user = _find_user(db, username)
+    has_records = db.scalar(
+        select(func.count()).select_from(UsageRecord).where(UsageRecord.user_id == user.id)
+    )
+    if has_records:
+        raise HTTPException(
+            status_code=409, detail="This account has usage records and cannot be removed."
+        )
+    db.delete(user)
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="This account has usage records and cannot be removed."
+        ) from error
+    return {"status": "user removed"}
+
+
 def _month_bounds(month: str) -> tuple[datetime, datetime]:
     try:
         start = datetime.strptime(month, "%Y-%m")
@@ -644,6 +810,12 @@ def admin_dashboard(month: str | None = None, db: Session = Depends(get_db)) -> 
                 "username": user.username,
                 "records": count,
                 "last_seen": user.last_seen.isoformat(),
+                "status": user.status,
+                "section": (
+                    _section_dict(db.get(ClassroomSection, user.section_id))
+                    if user.section_id
+                    else None
+                ),
                 "credentials_set": user.password_hash is not None,
                 "assigned_room": (
                     _room_identity(db.get(ClassroomRoom, user.assigned_room_id))
@@ -810,10 +982,12 @@ def admin_reports(
 
 @app.post("/api/admin/sections", status_code=201, dependencies=[Depends(require_admin)])
 def add_section(payload: SectionRequest, db: Session = Depends(get_db)) -> dict:
-    name = " ".join(payload.name.split())
+    grade = payload.grade.strip()
+    section_name = " ".join(payload.section_name.split()).upper()
+    name = f"{grade} - {section_name}"
     if db.scalar(select(ClassroomSection.id).where(func.lower(ClassroomSection.name) == name.lower())):
         raise HTTPException(status_code=409, detail="That section already exists.")
-    section = ClassroomSection(name=name)
+    section = ClassroomSection(name=name, grade=grade, section_name=section_name)
     db.add(section)
     db.commit()
     db.refresh(section)
@@ -987,6 +1161,11 @@ def delete_section(section_id: int, db: Session = Depends(get_db)) -> dict[str, 
     section = db.get(ClassroomSection, section_id)
     if section is None:
         raise HTTPException(status_code=404, detail="Section not found.")
+    assigned_users = db.scalar(
+        select(func.count()).select_from(ClassroomUser).where(ClassroomUser.section_id == section_id)
+    )
+    if assigned_users:
+        raise HTTPException(status_code=409, detail="This section has assigned accounts and cannot be removed.")
     has_records = db.scalar(
         select(func.count()).select_from(UsageRecord).where(UsageRecord.section_id == section_id)
     )
@@ -997,7 +1176,7 @@ def delete_section(section_id: int, db: Session = Depends(get_db)) -> dict[str, 
         db.commit()
     except IntegrityError as error:
         db.rollback()
-        raise HTTPException(status_code=409, detail="This section has usage records and cannot be removed.") from error
+        raise HTTPException(status_code=409, detail="This section is still in use and cannot be removed.") from error
     return {"status": "section removed"}
 
 

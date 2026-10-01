@@ -15,6 +15,10 @@ class ClassroomSection(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    # Structured section fields: name is the display label ("11 - BERNOULLI")
+    # while grade/section_name hold the parts; legacy rows may have them null.
+    grade: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    section_name: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     records: Mapped[list["UsageRecord"]] = relationship(back_populates="section")
 
@@ -36,12 +40,18 @@ class ClassroomUser(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
     password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # "pending" until an admin approves a self-registration; "active" to sign in.
+    status: Mapped[str] = mapped_column(String(16), default="active", nullable=False)
+    section_id: Mapped[int | None] = mapped_column(
+        ForeignKey("classroom_sections.id"), nullable=True, index=True
+    )
     assigned_room_id: Mapped[int | None] = mapped_column(
         ForeignKey("classroom_rooms.id"), nullable=True, index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     last_seen: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     records: Mapped[list["UsageRecord"]] = relationship(back_populates="user")
+    section: Mapped["ClassroomSection | None"] = relationship()
     assigned_room: Mapped["ClassroomRoom | None"] = relationship(
         back_populates="assigned_users", foreign_keys=[assigned_room_id]
     )

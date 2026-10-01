@@ -6,6 +6,8 @@ import {
   ArrowRight,
   Bolt,
   Building2,
+  Check,
+  ChevronDown,
   ClipboardList,
   DoorOpen,
   LogOut,
@@ -16,7 +18,9 @@ import {
   Search,
   Sun,
   Trash2,
+  UserPlus,
   Users,
+  X,
   Zap,
 } from "lucide-react";
 import {
@@ -71,18 +75,13 @@ function roomKwh(value) {
 
 function Brand({ compact = false }) {
   return (
-    <a
-      className={`brand${compact ? " brand-compact" : ""}`}
-      href="/mcs"
-    >
+    <a className={`brand${compact ? " brand-compact" : ""}`} href="/mcs">
       <span className="brand-icon">
         <Bolt size={18} fill="currentColor" />
       </span>
       <span className="brand-word">
         wattwise<span>.</span>
       </span>
-      {!compact && <span className="brand-divider" />}
-      {!compact && <span className="brand-context">CLASSROOM ENERGY</span>}
     </a>
   );
 }
@@ -211,6 +210,201 @@ function RoleChoice() {
   );
 }
 
+function SignupPage() {
+  const { darkMode, toggleTheme } = useTheme();
+  const [sections, setSections] = useState([]);
+  const [sectionId, setSectionId] = useState("");
+  const [signupUsername, setSignupUsername] = useState("");
+  const [signupPassword, setSignupPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [created, setCreated] = useState(null);
+
+  useEffect(() => {
+    request("/sections")
+      .then((data) => {
+        setSections(data);
+        setSectionId((current) => current || String(data[0]?.id || ""));
+      })
+      .catch((error) => setNotice(error.message));
+  }, []);
+
+  async function register(event) {
+    event.preventDefault();
+    setNotice("");
+    if (signupPassword !== confirmPassword) {
+      setNotice("Passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await request("/users/register", {
+        method: "POST",
+        body: JSON.stringify({
+          username: signupUsername,
+          password: signupPassword,
+          section_id: Number(sectionId),
+        }),
+      });
+      setCreated(result);
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const signupTopbar = (
+    <Topbar
+      subtitle="USER REGISTRATION"
+      right={
+        <>
+          <ThemeToggle darkMode={darkMode} onToggle={toggleTheme} />
+          <a className="topbar-link" href="/mcs">
+            <ArrowLeft size={15} /> All workspaces
+          </a>
+        </>
+      }
+    />
+  );
+
+  if (created) {
+    return (
+      <main className="auth-page">
+        {signupTopbar}
+        <section className="auth-layout">
+          <div className="auth-aside">
+            <span className="auth-aside-number">02 / SIGNUP</span>
+            <div className="auth-aside-mark">
+              <UserPlus size={30} />
+            </div>
+            <h1>
+              One step
+              <br />
+              to go.
+            </h1>
+            <p>Every new account is reviewed by an administrator first.</p>
+            <div className="auth-aside-line" />
+          </div>
+          <div className="auth-form signup-success">
+            <span className="signup-check">
+              <Check size={28} />
+            </span>
+            <div className="eyebrow">ACCOUNT REQUESTED</div>
+            <h2>Almost there, {created.username}.</h2>
+            <p className="form-intro">
+              Your account for <strong>{created.section?.name}</strong> is
+              waiting for administrator approval. You can sign in as soon as it
+              is approved.
+            </p>
+            <a className="button button-primary button-wide" href="/mcs/user">
+              <ArrowLeft size={16} /> Back to sign in
+            </a>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="auth-page">
+      {signupTopbar}
+      <section className="auth-layout">
+        <div className="auth-aside">
+          <span className="auth-aside-number">02 / SIGNUP</span>
+          <div className="auth-aside-mark">
+            <UserPlus size={30} />
+          </div>
+          <h1>
+            Join your
+            <br />
+            classroom.
+          </h1>
+          <p>
+            Register once, pick your section, and an administrator opens the
+            door.
+          </p>
+          <div className="auth-aside-line" />
+        </div>
+        <form className="auth-form" onSubmit={register}>
+          <div className="eyebrow">NEW ACCOUNT</div>
+          <h2>Create your account</h2>
+          <p className="form-intro">
+            Choose your classroom section and a username. Your administrator
+            approves the account before you can sign in.
+          </p>
+          <label className="field-label">
+            Classroom section
+            <select
+              value={sectionId}
+              onChange={(event) => setSectionId(event.target.value)}
+              required
+            >
+              {sections.length ? (
+                sections.map((section) => (
+                  <option key={section.id} value={section.id}>
+                    {section.name}
+                  </option>
+                ))
+              ) : (
+                <option value="">No sections available</option>
+              )}
+            </select>
+            <ChevronDown className="select-chevron" size={16} />
+          </label>
+          <label className="field-label">
+            Account name
+            <input
+              autoComplete="username"
+              value={signupUsername}
+              onChange={(event) => setSignupUsername(event.target.value)}
+              placeholder="e.g. maria.santos"
+              required
+              minLength={2}
+              maxLength={80}
+            />
+          </label>
+          <label className="field-label">
+            Password
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={signupPassword}
+              onChange={(event) => setSignupPassword(event.target.value)}
+              placeholder="At least 8 characters"
+              required
+              minLength={8}
+            />
+          </label>
+          <label className="field-label">
+            Confirm password
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              required
+              minLength={8}
+            />
+          </label>
+          <Notice>{notice}</Notice>
+          <button
+            className="button button-primary button-wide"
+            disabled={busy || !sections.length}
+          >
+            {busy ? "Creating account..." : "Request approval"}
+            <ArrowRight size={16} />
+          </button>
+          <p className="auth-footnote">
+            Already have an account? <a href="/mcs/user">Sign in instead</a>.
+          </p>
+        </form>
+      </section>
+    </main>
+  );
+}
+
 function UserPortal() {
   const { darkMode, toggleTheme } = useTheme();
   const [username, setUsername] = useState(
@@ -220,11 +414,10 @@ function UserPortal() {
   const [signedIn, setSignedIn] = useState(() =>
     Boolean(localStorage.getItem("wattwise-user")),
   );
-  const [sections, setSections] = useState([]);
+  const [accountSection, setAccountSection] = useState(null);
   const [appliances, setAppliances] = useState([]);
   const [assignedRoom, setAssignedRoom] = useState(null);
   const [records, setRecords] = useState([]);
-  const [sectionId, setSectionId] = useState("");
   const [roomId, setRoomId] = useState("");
   const [occupants, setOccupants] = useState("");
   const [showApplianceForm, setShowApplianceForm] = useState(false);
@@ -246,23 +439,16 @@ function UserPortal() {
   const [busy, setBusy] = useState(false);
 
   async function loadWorkspace() {
-    const [nextSections, nextAppliances, nextRecords, session] =
-      await Promise.all([
-        request("/sections"),
-        request("/appliances"),
-        request("/users/me/records"),
-        request("/users/session"),
-      ]);
-    setSections(nextSections);
+    const [nextAppliances, nextRecords, session] = await Promise.all([
+      request("/appliances"),
+      request("/users/me/records"),
+      request("/users/session"),
+    ]);
     setAppliances(nextAppliances);
     setRecords(nextRecords);
     setAssignedRoom(session.assigned_room);
     setRoomId(session.assigned_room ? String(session.assigned_room.id) : "");
-    setSectionId((current) =>
-      nextSections.some((section) => String(section.id) === current)
-        ? current
-        : String(nextSections[0]?.id || ""),
-    );
+    setAccountSection(session.section || null);
   }
 
   useEffect(() => {
@@ -300,6 +486,7 @@ function UserPortal() {
       setPassword("");
       setAssignedRoom(account.assigned_room);
       setRoomId(account.assigned_room ? String(account.assigned_room.id) : "");
+      setAccountSection(account.section || null);
       localStorage.setItem("wattwise-user", account.username);
       try {
         setRunning(
@@ -375,7 +562,6 @@ function UserPortal() {
       ...running,
       [appliance.id]: {
         startedAt: Date.now(),
-        sectionId: Number(sectionId),
         roomId: Number(roomId),
       },
     };
@@ -401,11 +587,13 @@ function UserPortal() {
       const saved = await request("/records", {
         method: "POST",
         body: JSON.stringify({
-          section_id: session.sectionId,
           room_id: session.roomId,
           appliance_id: appliance.id,
           hours: elapsedHours,
-          occupants: occupants === "" ? null : Math.max(0, Math.floor(Number(occupants) || 0)),
+          occupants:
+            occupants === ""
+              ? null
+              : Math.max(0, Math.floor(Number(occupants) || 0)),
           started_at: new Date(session.startedAt).toISOString(),
         }),
       });
@@ -464,13 +652,11 @@ function UserPortal() {
               <br />
               room count.
             </h1>
-            <p>
-              Record what your classroom uses. WattWise handles the energy math.
-            </p>
+            <p>Record what your classroom uses. Make every kilowatt count.</p>
             <div className="auth-aside-line" />
           </div>
           <form className="auth-form" onSubmit={signIn}>
-            <div className="eyebrow">TEACHER & STAFF PORTAL</div>
+            <div className="eyebrow">User Portal</div>
             <h2>Welcome back</h2>
             <p className="form-intro">
               Use the username and password provided by your administrator.
@@ -507,6 +693,9 @@ function UserPortal() {
             </button>
             <p className="auth-footnote">
               Ask your administrator to create or reset your credentials.
+            </p>
+            <p className="auth-alt-link">
+              No account yet? <a href="/mcs/user/signup">Register for one</a>
             </p>
           </form>
         </section>
@@ -581,10 +770,16 @@ function UserPortal() {
         </article>
         <article className="summary-tile">
           <span className="summary-label">
-            <ClipboardList size={15} /> CLASSROOM SECTIONS
+            <ClipboardList size={15} /> YOUR CLASSROOM SECTION
           </span>
-          <strong>{sections.length.toString().padStart(2, "0")}</strong>
-          <span className="summary-note">Available to report</span>
+          <strong className="section-tile-name">
+            {accountSection ? accountSection.name : "—"}
+          </strong>
+          <span className="summary-note">
+            {accountSection
+              ? "Fixed when your account was created"
+              : "Ask an administrator to set your section"}
+          </span>
         </article>
       </section>
       <section className="user-table-layout">
@@ -634,19 +829,15 @@ function UserPortal() {
             </form>
           )}
           <div className="appliance-table-tools">
-            <label className="section-choice">
+            <div
+              className="section-choice section-fixed"
+              title={accountSection?.name}
+            >
               <span>CLASSROOM SECTION</span>
-              <select
-                value={sectionId}
-                onChange={(event) => setSectionId(event.target.value)}
-              >
-                {sections.map((section) => (
-                  <option key={section.id} value={section.id}>
-                    {section.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <strong>
+                {accountSection ? accountSection.name : "Not set"}
+              </strong>
+            </div>
             <label className="section-choice">
               <span>OCCUPANTS (OPTIONAL)</span>
               <input
@@ -730,7 +921,7 @@ function UserPortal() {
                             className={`power-toggle${session ? " is-on" : ""}`}
                             aria-pressed={Boolean(session)}
                             disabled={
-                              busy || (!session && (!sectionId || !roomId))
+                              busy || (!session && (!accountSection || !roomId))
                             }
                             onClick={() =>
                               session
@@ -782,7 +973,8 @@ function UserPortal() {
                   <span className="record-main">
                     <strong>{record.appliance}</strong>
                     <small>
-                      {record.section} · {parseFloat(record.hours.toFixed(2))} hr
+                      {record.section} · {parseFloat(record.hours.toFixed(2))}{" "}
+                      hr
                       {record.hours === 1 ? "" : "s"}
                       {record.occupants != null
                         ? ` · ${record.occupants} occupant${record.occupants === 1 ? "" : "s"}`
@@ -792,14 +984,14 @@ function UserPortal() {
                   <span className="record-values">
                     <strong>{record.energy_kwh.toFixed(2)} kWh</strong>
                     <small>
-                      {new Date(record.created_at).toLocaleDateString(
-                        "en-PH",
-                        { month: "short", day: "numeric" },
-                      )}{" "}
-                      {new Date(record.created_at).toLocaleTimeString(
-                        "en-PH",
-                        { hour: "numeric", minute: "2-digit" },
-                      )}
+                      {new Date(record.created_at).toLocaleDateString("en-PH", {
+                        month: "short",
+                        day: "numeric",
+                      })}{" "}
+                      {new Date(record.created_at).toLocaleTimeString("en-PH", {
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
                     </small>
                   </span>
                 </article>
@@ -847,6 +1039,7 @@ function AdminPortal() {
   const [success, setSuccess] = useState("");
   const [busy, setBusy] = useState(false);
   const [sectionName, setSectionName] = useState("");
+  const [sectionGrade, setSectionGrade] = useState("11");
   const [applianceName, setApplianceName] = useState("");
   const [applianceWatts, setApplianceWatts] = useState(100);
   const [editingId, setEditingId] = useState(null);
@@ -1006,13 +1199,18 @@ function AdminPortal() {
   async function addSection(event) {
     event.preventDefault();
     setNotice("");
+    setSuccess("");
     try {
-      await request("/admin/sections", {
+      const created = await request("/admin/sections", {
         method: "POST",
-        body: JSON.stringify({ name: sectionName }),
+        body: JSON.stringify({
+          grade: sectionGrade,
+          section_name: sectionName,
+        }),
       });
       setSectionName("");
       await loadDashboard();
+      setSuccess(`${created.name} added to the section list.`);
     } catch (error) {
       setNotice(error.message);
     }
@@ -1116,6 +1314,61 @@ function AdminPortal() {
     }
   }
 
+  async function assignUserSection(accountName, nextSectionId) {
+    setNotice("");
+    setSuccess("");
+    try {
+      await request(`/admin/users/${encodeURIComponent(accountName)}/section`, {
+        method: "PUT",
+        body: JSON.stringify({ section_id: nextSectionId || null }),
+      });
+      await loadDashboard();
+      setSuccess(
+        nextSectionId
+          ? `${accountName}'s classroom section updated.`
+          : `Classroom section cleared for ${accountName}.`,
+      );
+    } catch (error) {
+      setNotice(error.message);
+    }
+  }
+
+  async function approveUser(accountName) {
+    setNotice("");
+    setSuccess("");
+    try {
+      const result = await request(
+        `/admin/users/${encodeURIComponent(accountName)}/approve`,
+        { method: "POST" },
+      );
+      await loadDashboard();
+      setSuccess(`${result.username} approved — they can sign in now.`);
+    } catch (error) {
+      setNotice(error.message);
+    }
+  }
+
+  async function rejectUser(accountName) {
+    if (
+      !window.confirm(
+        `Reject and remove the registration for "${accountName}"?`,
+      )
+    ) {
+      return;
+    }
+    setNotice("");
+    setSuccess("");
+    try {
+      await request(`/admin/users/${encodeURIComponent(accountName)}`, {
+        method: "DELETE",
+      });
+      await loadDashboard();
+      setSuccess(`${accountName}'s registration was rejected and removed.`);
+    } catch (error) {
+      setNotice(error.message);
+    }
+  }
+
   if (!admin) {
     return (
       <main className="auth-page">
@@ -1189,6 +1442,10 @@ function AdminPortal() {
     );
   }
 
+  const pendingUsers = (dashboard?.users || []).filter(
+    (user) => user.status === "pending",
+  );
+
   const tabs = [
     ["overview", "Overview", Activity],
     ["reports", "Reports", Zap],
@@ -1230,6 +1487,9 @@ function AdminPortal() {
             >
               <Icon size={17} />
               {label}
+              {key === "users" && pendingUsers.length > 0 && (
+                <span className="rail-badge">{pendingUsers.length}</span>
+              )}
               {tab === key && <span className="rail-active-mark" />}
             </button>
           ))}
@@ -1283,7 +1543,7 @@ function AdminPortal() {
           {!dashboard ? (
             <div className="panel loading-panel">Loading classroom data...</div>
           ) : (
-            <>
+            <div className="tab-content" key={tab}>
               {tab === "overview" && (
                 <>
                   <section className="admin-metrics">
@@ -1525,8 +1785,8 @@ function AdminPortal() {
                       </div>
                       <RecordsTable records={dashboard.alerts} />
                       <p className="alert-legend">
-                        Flagged sessions ran 8 hours or more, or over twice
-                        the appliance average.
+                        Flagged sessions ran 8 hours or more, or over twice the
+                        appliance average.
                       </p>
                     </section>
                   ) : null}
@@ -1578,7 +1838,9 @@ function AdminPortal() {
                             placeholder="Search room, name, or account"
                             aria-label="Search rooms"
                             value={roomQuery}
-                            onChange={(event) => setRoomQuery(event.target.value)}
+                            onChange={(event) =>
+                              setRoomQuery(event.target.value)
+                            }
                           />
                         </label>
                         <label className="usage-filter">
@@ -1634,8 +1896,7 @@ function AdminPortal() {
                                     />
                                   </i>
                                   <small>
-                                    {room.building_name} · floor{" "}
-                                    {room.floor}
+                                    {room.building_name} · floor {room.floor}
                                   </small>
                                 </span>
                                 <span className="rank-value">
@@ -1659,85 +1920,92 @@ function AdminPortal() {
                       {visibleRooms.length === 0 ? (
                         <div className="panel room-empty-panel">
                           <div className="empty-state compact-empty">
-                            No rooms match your search. Try a room number,
-                            room name, or account.
+                            No rooms match your search. Try a room number, room
+                            name, or account.
                           </div>
                         </div>
                       ) : (
-                      <section className="building-grid">
-                        {roomsData.buildings
-                          .filter((building) =>
-                            building.rooms.some(roomMatches),
-                          )
-                          .map((building) => (
-                          <article
-                            className="panel building-panel"
-                            key={building.code}
-                          >
-                            <div className="building-heading">
-                              <span className="building-icon">
-                                <Building2 size={17} />
-                              </span>
-                              <span>
-                                <strong>{building.name}</strong>
-                                <small>
-                                  {building.rooms.filter(roomMatches).length}{" "}
-                                  OF {building.rooms.length} ROOMS · 4 FLOORS
-                                </small>
-                              </span>
-                              <span className="building-average">
-                                {roomKwh(building.average_kwh_per_room)}
-                                <small>kWh avg</small>
-                              </span>
-                            </div>
-                            <div className="floor-stack">
-                              {[4, 3, 2, 1]
-                                .filter((floor) =>
-                                  building.rooms.some(
-                                    (room) =>
-                                      room.floor === floor && roomMatches(room),
-                                  ),
-                                )
-                                .map((floor) => (
-                                <div
-                                  className="floor-row"
-                                  key={`${building.code}-${floor}`}
-                                >
-                                  <span className="floor-label">
-                                    <small>FLOOR</small>
-                                    <strong>{floor}</strong>
+                        <section className="building-grid">
+                          {roomsData.buildings
+                            .filter((building) =>
+                              building.rooms.some(roomMatches),
+                            )
+                            .map((building) => (
+                              <article
+                                className="panel building-panel"
+                                key={building.code}
+                              >
+                                <div className="building-heading">
+                                  <span className="building-icon">
+                                    <Building2 size={17} />
                                   </span>
-                                  <div className="floor-rooms">
-                                    {building.rooms
-                                      .filter(
+                                  <span>
+                                    <strong>{building.name}</strong>
+                                    <small>
+                                      {
+                                        building.rooms.filter(roomMatches)
+                                          .length
+                                      }{" "}
+                                      OF {building.rooms.length} ROOMS · 4
+                                      FLOORS
+                                    </small>
+                                  </span>
+                                  <span className="building-average">
+                                    {roomKwh(building.average_kwh_per_room)}
+                                    <small>kWh avg</small>
+                                  </span>
+                                </div>
+                                <div className="floor-stack">
+                                  {[4, 3, 2, 1]
+                                    .filter((floor) =>
+                                      building.rooms.some(
                                         (room) =>
                                           room.floor === floor &&
                                           roomMatches(room),
-                                      )
-                                      .map((room) => (
-                                        <button
-                                          type="button"
-                                          key={room.id}
-                                          className={`room-tile ${room.usage_status === "high" ? "room-high" : "room-average"}${selectedRoomId === room.id ? " room-selected" : ""}`}
-                                          onClick={() => chooseRoom(room)}
-                                          aria-pressed={
-                                            selectedRoomId === room.id
-                                          }
-                                          title={`${room.display_name} · ${room.display_type} · ${roomKwh(room.average_kwh)} kWh / 30 days`}
-                                        >
-                                          <strong>{room.room_number}</strong>
-                                          <small>
-                                            {roomKwh(room.average_kwh)}
-                                          </small>
-                                        </button>
-                                      ))}
-                                  </div>
+                                      ),
+                                    )
+                                    .map((floor) => (
+                                      <div
+                                        className="floor-row"
+                                        key={`${building.code}-${floor}`}
+                                      >
+                                        <span className="floor-label">
+                                          <small>FLOOR</small>
+                                          <strong>{floor}</strong>
+                                        </span>
+                                        <div className="floor-rooms">
+                                          {building.rooms
+                                            .filter(
+                                              (room) =>
+                                                room.floor === floor &&
+                                                roomMatches(room),
+                                            )
+                                            .map((room) => (
+                                              <button
+                                                type="button"
+                                                key={room.id}
+                                                className={`room-tile ${room.usage_status === "high" ? "room-high" : "room-average"}${selectedRoomId === room.id ? " room-selected" : ""}`}
+                                                onClick={() => chooseRoom(room)}
+                                                aria-pressed={
+                                                  selectedRoomId === room.id
+                                                }
+                                                title={`${room.display_name} · ${room.display_type} · ${roomKwh(room.average_kwh)} kWh / 30 days`}
+                                              >
+                                                <strong>
+                                                  {room.room_number}
+                                                </strong>
+                                                <small>
+                                                  {roomKwh(room.average_kwh)}
+                                                </small>
+                                              </button>
+                                            ))}
+                                        </div>
+                                      </div>
+                                    ))}
                                 </div>
-                              ))}
-                            </div>
-                          </article>
-                        ))}
-                      </section>
+                              </article>
+                            ))}
+                        </section>
                       )}
                       {selectedRoom && (
                         <section className="panel room-detail-panel">
@@ -1968,6 +2236,58 @@ function AdminPortal() {
                       {dashboard.users.length} accounts
                     </span>
                   </div>
+                  {pendingUsers.length > 0 && (
+                    <div className="approval-block">
+                      <div className="approval-heading">
+                        <span className="eyebrow">REGISTRATION REQUESTS</span>
+                        <span className="count-pill pending-pill">
+                          {pendingUsers.length} pending
+                        </span>
+                      </div>
+                      <div className="approval-list">
+                        {pendingUsers.map((user) => (
+                          <article className="approval-row" key={user.username}>
+                            <span className="account-avatar pending-avatar">
+                              {user.username.slice(0, 1).toUpperCase()}
+                            </span>
+                            <span className="approval-main">
+                              <strong>{user.username}</strong>
+                              <small>
+                                {user.section
+                                  ? user.section.name
+                                  : "No section set"}{" "}
+                                · requested{" "}
+                                {new Date(
+                                  `${user.last_seen}Z`,
+                                ).toLocaleDateString("en-PH", {
+                                  month: "short",
+                                  day: "numeric",
+                                })}
+                              </small>
+                            </span>
+                            <span className="approval-actions">
+                              <button
+                                type="button"
+                                className="approve-action"
+                                title={`Approve ${user.username}`}
+                                onClick={() => approveUser(user.username)}
+                              >
+                                <Check size={15} /> Approve
+                              </button>
+                              <button
+                                type="button"
+                                className="reject-action"
+                                title={`Reject ${user.username}`}
+                                onClick={() => rejectUser(user.username)}
+                              >
+                                <X size={15} /> Reject
+                              </button>
+                            </span>
+                          </article>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div className="credential-provision">
                     <div>
                       <span className="eyebrow">ISSUE OR RESET ACCESS</span>
@@ -2041,9 +2361,11 @@ function AdminPortal() {
                       <thead>
                         <tr>
                           <th>ACCOUNT</th>
+                          <th>SECTION</th>
                           <th>ASSIGNED ROOM</th>
                           <th>ENTRIES</th>
                           <th>LAST ACTIVE</th>
+                          <th>STATUS</th>
                           <th>CREDENTIALS</th>
                         </tr>
                       </thead>
@@ -2057,6 +2379,29 @@ function AdminPortal() {
                                 </span>
                                 <strong>{user.username}</strong>
                               </span>
+                            </td>
+                            <td>
+                              <select
+                                className="user-section-select"
+                                value={
+                                  user.section ? String(user.section.id) : ""
+                                }
+                                onChange={(event) => {
+                                  const value = event.target.value;
+                                  assignUserSection(
+                                    user.username,
+                                    value ? Number(value) : null,
+                                  );
+                                }}
+                                aria-label={`Set section for ${user.username}`}
+                              >
+                                <option value="">No section</option>
+                                {dashboard.sections_catalog.map((section) => (
+                                  <option key={section.id} value={section.id}>
+                                    {section.name}
+                                  </option>
+                                ))}
+                              </select>
                             </td>
                             <td>
                               <select
@@ -2100,6 +2445,16 @@ function AdminPortal() {
                             </td>
                             <td>
                               <span
+                                className={`account-status${user.status === "active" ? " is-approved" : ""}`}
+                              >
+                                <i />{" "}
+                                {user.status === "active"
+                                  ? "APPROVED"
+                                  : "PENDING"}
+                              </span>
+                            </td>
+                            <td>
+                              <span
                                 className={`credential-status${user.credentials_set ? " is-ready" : ""}`}
                               >
                                 <i />{" "}
@@ -2128,13 +2483,29 @@ function AdminPortal() {
                         {dashboard.sections_catalog.length}
                       </span>
                     </div>
-                    <form className="inline-add-form" onSubmit={addSection}>
+                    <form
+                      className="inline-add-form section-add-form"
+                      onSubmit={addSection}
+                    >
+                      <label className="grade-select">
+                        <select
+                          value={sectionGrade}
+                          onChange={(event) =>
+                            setSectionGrade(event.target.value)
+                          }
+                          aria-label="Grade"
+                        >
+                          <option value="11">Grade 11</option>
+                          <option value="12">Grade 12</option>
+                        </select>
+                        <ChevronDown className="select-chevron" size={15} />
+                      </label>
                       <input
                         value={sectionName}
                         onChange={(event) => setSectionName(event.target.value)}
-                        placeholder="New section name"
+                        placeholder="Section name (e.g. bernoulli)"
                         minLength={2}
-                        maxLength={80}
+                        maxLength={40}
                         required
                       />
                       <button
@@ -2247,7 +2618,7 @@ function AdminPortal() {
                   </div>
                 </section>
               )}
-            </>
+            </div>
           )}
         </section>
       </div>
@@ -2458,6 +2829,7 @@ function RecordsTable({ records }) {
 
 export default function App() {
   const path = window.location.pathname.replace(/\/$/, "") || "/mcs";
+  if (path === "/mcs/user/signup") return <SignupPage />;
   if (path === "/mcs/user") return <UserPortal />;
   if (path === "/mcs/admin") return <AdminPortal />;
   return <RoleChoice />;

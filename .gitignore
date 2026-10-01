@@ -39,6 +39,7 @@ Thumbs.db
 .vercel/
 
 # Never push sibling project or workspace-only docs
+/AGENTS.md
 solar-energy/
 .vercel
 .env*
