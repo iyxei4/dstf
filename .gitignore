@@ -37,3 +37,6 @@ Thumbs.db
 
 # Vercel build artifact (copied from mcs/backend/app by installCommand)
 api/app/
+
+# Never push sibling project or workspace-only docs
+solar-energy/
