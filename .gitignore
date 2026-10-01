@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Databases (seeded/local data)
+*.db
+*.sqlite3
+
+# Secrets / local config
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Build output
+dist/
+build/
+
+# Logs and OS noise
+*.log
+Thumbs.db
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# Installers / binaries
+*.exe
