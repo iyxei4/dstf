@@ -1,0 +1,29 @@
+# Render blueprint: one web service that builds the React frontend, serves it
+# from FastAPI, and talks to Supabase Postgres via MCS_DATABASE_URL.
+services:
+  - type: web
+    name: wattwise-classrooms
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r mcs/backend/requirements.txt && cd mcs/frontend && npm ci && npm run build
+    startCommand: cd mcs/backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # Supabase Postgres connection string — set in the Render dashboard
+      # (sync: false keeps the value out of the repository).
+      - key: MCS_DATABASE_URL
+        sync: false
+      # Signs session cookies; generated and stored by Render, never in git.
+      - key: MCS_SESSION_SECRET
+        generateValue: true
+      # Admin credentials — set MCS_ADMIN_PASSWORD in the dashboard.
+      - key: MCS_ADMIN_USERNAME
+        value: admin
+      - key: MCS_ADMIN_PASSWORD
+        sync: false
+      - key: MCS_SECURE_COOKIES
+        value: "true"
+      - key: MCS_ELECTRICITY_RATE
+        value: "12"
