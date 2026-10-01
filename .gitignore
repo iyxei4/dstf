@@ -34,3 +34,6 @@ Thumbs.db
 
 # Installers / binaries
 *.exe
+
+# Vercel build artifact (copied from mcs/backend/app by installCommand)
+api/app/

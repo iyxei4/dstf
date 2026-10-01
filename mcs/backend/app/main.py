@@ -227,8 +227,15 @@ def _record_dict(record: UsageRecord, stats: dict[int, tuple[float, int]] | None
     }
 
 
+_db_initialized = False
+
+
 @app.on_event("startup")
 def initialize_database() -> None:
+    global _db_initialized
+    if _db_initialized:
+        return
+    _db_initialized = True
     Base.metadata.create_all(bind=engine)
     user_columns = {column["name"] for column in inspect(engine).get_columns("classroom_users")}
     with engine.begin() as connection:
@@ -1057,3 +1064,13 @@ if FRONTEND_DIST.is_dir():
                 return FileResponse(candidate)
         # /mcs, /mcs/user, /mcs/admin (and any unknown path) -> SPA shell.
         return FileResponse(_DIST_ROOT / "index.html")
+
+
+# Serverless platforms (Vercel) may never fire the startup event, so run the
+# idempotent schema+seed init at import too; the flag keeps a single run.
+try:
+    initialize_database()
+except Exception as error:  # pragma: no cover - unreachable DB at import
+    import sys
+
+    print(f"deferred database init: {error}", file=sys.stderr)
