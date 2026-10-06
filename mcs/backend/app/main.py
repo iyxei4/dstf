@@ -1,4 +1,5 @@
 from calendar import day_name, monthrange
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
@@ -8,12 +9,12 @@ import secrets
 import time
 from typing import Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, inspect, select
+from sqlalchemy import String, cast, func, inspect, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import Base, SessionLocal, engine
 from app.db_models import Appliance, ClassroomRoom, ClassroomSection, ClassroomUser, UsageRecord, utc_now
@@ -35,15 +36,29 @@ UNUSUAL_USE_MULTIPLE = 2.0
 UNUSUAL_USE_MIN_SESSIONS = 3
 
 
-def _appliance_hour_stats(db: Session) -> dict[int, tuple[float, int]]:
-    """Map appliance_id -> (mean hours, session count) over all history."""
-    rows = db.execute(
+def _appliance_hour_stats(
+    db: Session,
+    appliance_ids: Iterable[int] | None = None,
+) -> dict[int, tuple[float, int]]:
+    """Map appliance_id -> (mean hours, session count) over history.
+
+    Pass the appliance ids actually being displayed to keep the aggregate off
+    a full-table scan; each mean still spans that appliance's entire history.
+    """
+    stmt = (
         select(
             UsageRecord.appliance_id,
             func.avg(UsageRecord.hours),
             func.count(UsageRecord.id),
-        ).group_by(UsageRecord.appliance_id)
-    ).all()
+        )
+        .group_by(UsageRecord.appliance_id)
+    )
+    if appliance_ids is not None:
+        ids = {item for item in appliance_ids if item is not None}
+        if not ids:
+            return {}
+        stmt = stmt.where(UsageRecord.appliance_id.in_(ids))
+    rows = db.execute(stmt).all()
     return {row[0]: (float(row[1] or 0), int(row[2])) for row in rows}
 
 
@@ -226,24 +241,39 @@ def _room_identity(room: ClassroomRoom) -> dict:
     }
 
 
-def _record_dict(record: UsageRecord, stats: dict[int, tuple[float, int]] | None = None) -> dict:
+def _record_dict(
+    record: UsageRecord,
+    stats: dict[int, tuple[float, int]] | None = None,
+    flags: list[str] | None = None,
+    *,
+    user: ClassroomUser | None = None,
+    section: ClassroomSection | None = None,
+    appliance: Appliance | None = None,
+) -> dict:
+    # Related rows are passed in when the caller already holds them, so write
+    # responses never pay for three lazy relationship loads per record.
+    user = user or record.user
+    section = section or record.section
+    appliance = appliance or record.appliance
     started = record.started_at or (record.created_at - timedelta(hours=record.hours))
     return {
         "id": record.id,
-        "username": record.user.username,
-        "section": record.section.name,
+        "username": user.username,
+        "section": section.name,
         "section_id": record.section_id,
         "room_id": record.room_id,
-        "appliance": record.appliance.name,
+        "appliance": appliance.name,
         "appliance_id": record.appliance_id,
-        "wattage": record.appliance.wattage,
+        "wattage": appliance.wattage,
         "hours": record.hours,
         "energy_kwh": record.energy_kwh,
         "estimated_cost_php": round(record.energy_kwh * ELECTRICITY_RATE, 2),
         "occupants": record.occupants,
         "started_at": started.isoformat(),
         "created_at": record.created_at.isoformat(),
-        "flags": _usage_flags(record.hours, (stats or {}).get(record.appliance_id)),
+        "flags": flags
+        if flags is not None
+        else _usage_flags(record.hours, (stats or {}).get(record.appliance_id)),
     }
 
 
@@ -257,7 +287,11 @@ def initialize_database() -> None:
         return
     _db_initialized = True
     Base.metadata.create_all(bind=engine)
-    user_columns = {column["name"] for column in inspect(engine).get_columns("classroom_users")}
+    inspector = inspect(engine)
+    user_columns = {column["name"] for column in inspector.get_columns("classroom_users")}
+    section_columns = {column["name"] for column in inspector.get_columns("classroom_sections")}
+    usage_columns = {column["name"] for column in inspector.get_columns("usage_records")}
+    appliance_columns = {column["name"] for column in inspector.get_columns("appliances")}
     with engine.begin() as connection:
         if "password_hash" not in user_columns:
             connection.exec_driver_sql(
@@ -275,8 +309,6 @@ def initialize_database() -> None:
             connection.exec_driver_sql(
                 "ALTER TABLE classroom_users ADD COLUMN section_id INTEGER REFERENCES classroom_sections(id)"
             )
-    section_columns = {column["name"] for column in inspect(engine).get_columns("classroom_sections")}
-    with engine.begin() as connection:
         if "grade" not in section_columns:
             connection.exec_driver_sql(
                 "ALTER TABLE classroom_sections ADD COLUMN grade VARCHAR(4)"
@@ -285,30 +317,35 @@ def initialize_database() -> None:
             connection.exec_driver_sql(
                 "ALTER TABLE classroom_sections ADD COLUMN section_name VARCHAR(40)"
             )
-    usage_columns = {column["name"] for column in inspect(engine).get_columns("usage_records")}
-    if "room_id" not in usage_columns:
-        with engine.begin() as connection:
+        if "room_id" not in usage_columns:
             connection.exec_driver_sql(
                 "ALTER TABLE usage_records ADD COLUMN room_id INTEGER REFERENCES classroom_rooms(id)"
             )
-    appliance_columns = {column["name"] for column in inspect(engine).get_columns("appliances")}
-    if "archived" not in appliance_columns:
-        with engine.begin() as connection:
+        if "occupants" not in usage_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE usage_records ADD COLUMN occupants INTEGER"
+            )
+        if "started_at" not in usage_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE usage_records ADD COLUMN started_at TIMESTAMP"
+            )
+        if "archived" not in appliance_columns:
             connection.exec_driver_sql(
                 "ALTER TABLE appliances ADD COLUMN archived BOOLEAN NOT NULL DEFAULT 0"
             )
             connection.exec_driver_sql("UPDATE appliances SET archived = 0")
-    record_columns = {column["name"] for column in inspect(engine).get_columns("usage_records")}
-    if "occupants" not in record_columns:
-        with engine.begin() as connection:
-            connection.exec_driver_sql(
-                "ALTER TABLE usage_records ADD COLUMN occupants INTEGER"
-            )
-    if "started_at" not in record_columns:
-        with engine.begin() as connection:
-            connection.exec_driver_sql(
-                "ALTER TABLE usage_records ADD COLUMN started_at DATETIME"
-            )
+        # Composite indexes for the hot read paths: a user's recent submissions
+        # (user_id, created_at) and the trailing-30-day room map
+        # (room_id, created_at). IF NOT EXISTS keeps every cold start a catalog
+        # no-op once they exist, on both SQLite and Postgres.
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_usage_records_user_created "
+            "ON usage_records (user_id, created_at)"
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_usage_records_room_created "
+            "ON usage_records (room_id, created_at)"
+        )
     with SessionLocal() as db:
         if not db.scalar(select(ClassroomSection.id).limit(1)):
             db.add_all(
@@ -388,10 +425,10 @@ def list_appliances(db: Session = Depends(get_db)) -> list[dict]:
     ]
 
 
-@app.get("/api/rooms")
-def list_room_choices(db: Session = Depends(get_db)) -> list[dict]:
-    rooms = list(db.scalars(select(ClassroomRoom)))
+def _ordered_rooms(db: Session) -> list[ClassroomRoom]:
+    """All rooms in display order: building, then floor, then room index."""
     building_order = {"G11": 0, "ADMIN": 1, "G12": 2}
+    rooms = list(db.scalars(select(ClassroomRoom)))
     rooms.sort(
         key=lambda room: (
             building_order.get(room.building_code, 3),
@@ -399,7 +436,12 @@ def list_room_choices(db: Session = Depends(get_db)) -> list[dict]:
             room.room_index,
         )
     )
-    return [_room_identity(room) for room in rooms]
+    return rooms
+
+
+@app.get("/api/rooms")
+def list_room_choices(db: Session = Depends(get_db)) -> list[dict]:
+    return [_room_identity(room) for room in _ordered_rooms(db)]
 
 
 @app.post("/api/appliances", status_code=201)
@@ -414,7 +456,6 @@ def create_user_appliance(
     appliance = Appliance(name=name, wattage=payload.wattage)
     db.add(appliance)
     db.commit()
-    db.refresh(appliance)
     return _appliance_dict(appliance)
 
 
@@ -502,7 +543,6 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)) -> di
     except IntegrityError as error:
         db.rollback()
         raise HTTPException(status_code=409, detail="That account name is already taken.") from error
-    db.refresh(user)
     return {
         "username": user.username,
         "status": "pending",
@@ -535,18 +575,20 @@ def user_records(
     user: ClassroomUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    records = db.scalars(
-        select(UsageRecord)
-        .where(
-            UsageRecord.user_id == user.id,
-            # Recent entries only ever show the account's own classroom section.
-            UsageRecord.section_id == user.section_id,
+    records = list(
+        db.scalars(
+            select(UsageRecord)
+            .where(
+                UsageRecord.user_id == user.id,
+                # Recent entries only ever show the account's own classroom section.
+                UsageRecord.section_id == user.section_id,
+            )
+            .options(joinedload(UsageRecord.user), joinedload(UsageRecord.section), joinedload(UsageRecord.appliance))
+            .order_by(UsageRecord.created_at.desc())
+            .limit(100)
         )
-        .options(joinedload(UsageRecord.user), joinedload(UsageRecord.section), joinedload(UsageRecord.appliance))
-        .order_by(UsageRecord.created_at.desc())
-        .limit(100)
     )
-    stats = _appliance_hour_stats(db)
+    stats = _appliance_hour_stats(db, (record.appliance_id for record in records))
     return [_record_dict(record, stats) for record in records]
 
 
@@ -587,11 +629,11 @@ def create_record(
         started_at=started_at or (now - timedelta(hours=payload.hours)),
         created_at=now,
     )
-    user.last_seen = utc_now()
+    user.last_seen = now
     db.add(record)
     db.commit()
-    db.refresh(record)
-    return _record_dict(record)
+    # The session already holds every related row this response needs.
+    return _record_dict(record, user=user, section=section, appliance=appliance)
 
 
 @app.post("/api/admin/login")
@@ -741,50 +783,86 @@ def admin_dashboard(month: str | None = None, db: Session = Depends(get_db)) -> 
     now = datetime.now()
     month = month or now.strftime("%Y-%m")
     start, end = _month_bounds(month)
-    base_query = (
-        select(UsageRecord)
-        .where(UsageRecord.created_at >= start, UsageRecord.created_at < end)
-        .options(joinedload(UsageRecord.user), joinedload(UsageRecord.section), joinedload(UsageRecord.appliance))
-        .order_by(UsageRecord.created_at.desc())
+    records = list(
+        db.scalars(
+            select(UsageRecord)
+            .where(UsageRecord.created_at >= start, UsageRecord.created_at < end)
+            .options(joinedload(UsageRecord.user), joinedload(UsageRecord.section), joinedload(UsageRecord.appliance))
+            .order_by(UsageRecord.created_at.desc())
+        )
     )
-    records = list(db.scalars(base_query))
     section_totals: dict[str, float] = {}
     for record in records:
         section_totals[record.section.name] = section_totals.get(record.section.name, 0) + record.energy_kwh
     total_kwh = sum(record.energy_kwh for record in records)
-    monthly = []
+
+    # Six-month trend as one grouped query instead of one round trip per
+    # month: substr(cast(created_at), 1, 7) produces the YYYY-MM bucket key
+    # on both SQLite and Postgres.
+    base_index = start.year * 12 + start.month - 1
+    bucket_starts: list[datetime] = []
     for offset in range(5, -1, -1):
-        month_index = start.year * 12 + start.month - 1 - offset
-        year, month_index = divmod(month_index, 12)
-        month_start = datetime(year, month_index + 1, 1)
-        next_month = datetime(month_start.year + (month_start.month == 12), month_start.month % 12 + 1, 1)
-        total = db.scalar(
-            select(func.coalesce(func.sum(UsageRecord.energy_kwh), 0)).where(
-                UsageRecord.created_at >= month_start,
-                UsageRecord.created_at < next_month,
-            )
-        ) or 0
-        monthly.append({"month": month_start.strftime("%b %Y"), "kwh": round(total, 2), "bill": round(total * ELECTRICITY_RATE, 2)})
+        year, month_number = divmod(base_index - offset, 12)
+        bucket_starts.append(datetime(year, month_number + 1, 1))
+    trend_key = func.substr(cast(UsageRecord.created_at, String), 1, 7)
+    monthly_kwh = {
+        key: float(total or 0)
+        for key, total in db.execute(
+            select(trend_key, func.sum(UsageRecord.energy_kwh))
+            .where(UsageRecord.created_at >= bucket_starts[0], UsageRecord.created_at < end)
+            .group_by(trend_key)
+        ).all()
+    }
+    monthly = []
+    for bucket_start in bucket_starts:
+        total = monthly_kwh.get(bucket_start.strftime("%Y-%m"), 0)
+        monthly.append(
+            {
+                "month": bucket_start.strftime("%b %Y"),
+                "kwh": round(total, 2),
+                "bill": round(total * ELECTRICITY_RATE, 2),
+            }
+        )
     user_rows = db.execute(
         select(ClassroomUser, func.count(UsageRecord.id))
         .outerjoin(UsageRecord)
         .group_by(ClassroomUser.id)
         .order_by(ClassroomUser.last_seen.desc())
+        .options(
+            selectinload(ClassroomUser.section),
+            selectinload(ClassroomUser.assigned_room),
+        )
     ).all()
-    stats = _appliance_hour_stats(db)
-    flagged = [
-        record
-        for record in records
-        if _usage_flags(record.hours, stats.get(record.appliance_id))
-    ]
+    stats = _appliance_hour_stats(db, (record.appliance_id for record in records))
+    alerts: list[dict] = []
+    for record in records:
+        flags = _usage_flags(record.hours, stats.get(record.appliance_id))
+        if not flags:
+            continue
+        reason = (
+            "Session ran {0:g} hours (school-day threshold is {1:g}).".format(
+                record.hours, EXTENDED_USE_HOURS
+            )
+            if "extended-use" in flags
+            else "Session is unusually long for {0}.".format(record.appliance.name)
+        )
+        alerts.append({**_record_dict(record, stats, flags=flags), "reasons": [reason]})
+        if len(alerts) == 20:
+            break
+    user_count, section_count = db.execute(
+        select(
+            select(func.count()).select_from(ClassroomUser).scalar_subquery(),
+            select(func.count()).select_from(ClassroomSection).scalar_subquery(),
+        )
+    ).one()
     return {
         "month": month,
         "rate_php_per_kwh": ELECTRICITY_RATE,
         "total_kwh": round(total_kwh, 2),
         "estimated_bill_php": round(total_kwh * ELECTRICITY_RATE, 2),
         "record_count": len(records),
-        "user_count": db.scalar(select(func.count()).select_from(ClassroomUser)) or 0,
-        "section_count": db.scalar(select(func.count()).select_from(ClassroomSection)) or 0,
+        "user_count": user_count,
+        "section_count": section_count,
         "highest_section": max(section_totals, key=section_totals.get) if section_totals else None,
         "monthly": monthly,
         "sections": [
@@ -792,36 +870,16 @@ def admin_dashboard(month: str | None = None, db: Session = Depends(get_db)) -> 
             for name, kwh in sorted(section_totals.items(), key=lambda item: item[1], reverse=True)
         ],
         "records": [_record_dict(record, stats) for record in records[:100]],
-        "alerts": [
-            {
-                **_record_dict(record, stats),
-                "reasons": [
-                    "Session ran {0:g} hours (school-day threshold is {1:g}).".format(
-                        record.hours, EXTENDED_USE_HOURS
-                    )
-                    if "extended-use" in _usage_flags(record.hours, stats.get(record.appliance_id))
-                    else "Session is unusually long for {0}.".format(record.appliance.name),
-                ],
-            }
-            for record in flagged[:20]
-        ],
+        "alerts": alerts,
         "users": [
             {
                 "username": user.username,
                 "records": count,
                 "last_seen": user.last_seen.isoformat(),
                 "status": user.status,
-                "section": (
-                    _section_dict(db.get(ClassroomSection, user.section_id))
-                    if user.section_id
-                    else None
-                ),
+                "section": _section_dict(user.section) if user.section else None,
                 "credentials_set": user.password_hash is not None,
-                "assigned_room": (
-                    _room_identity(db.get(ClassroomRoom, user.assigned_room_id))
-                    if user.assigned_room_id
-                    else None
-                ),
+                "assigned_room": _room_identity(user.assigned_room) if user.assigned_room else None,
             }
             for user, count in user_rows
         ],
@@ -990,29 +1048,35 @@ def add_section(payload: SectionRequest, db: Session = Depends(get_db)) -> dict:
     section = ClassroomSection(name=name, grade=grade, section_name=section_name)
     db.add(section)
     db.commit()
-    db.refresh(section)
     return _section_dict(section)
 
 
 def _room_map_stats(db: Session) -> tuple[dict[int, dict], dict[str, float], dict[int, list[str]]]:
-    """30-day usage per room, per-building average kWh/room, and assigned usernames per room."""
+    """Trailing-30-day usage per room, per-building average kWh/room, and
+    assigned usernames per room. Usage is aggregated in SQL so the routes
+    never stream raw usage rows just to count them."""
     cutoff = utc_now() - timedelta(days=30)
     rooms = list(db.scalars(select(ClassroomRoom)))
     room_usage: dict[int, dict] = {
-        room.id: {"kwh": 0.0, "appliances": set(), "submissions": 0} for room in rooms
+        room.id: {"kwh": 0.0, "appliance_count": 0, "submissions": 0} for room in rooms
     }
-    usage_records = db.scalars(
-        select(UsageRecord)
+    usage_totals = db.execute(
+        select(
+            UsageRecord.room_id,
+            func.sum(UsageRecord.energy_kwh),
+            func.count(UsageRecord.id),
+            func.count(UsageRecord.appliance_id.distinct()),
+        )
         .where(UsageRecord.room_id.is_not(None), UsageRecord.created_at >= cutoff)
-        .options(joinedload(UsageRecord.appliance))
-    )
-    for record in usage_records:
-        metrics = room_usage.get(record.room_id)
+        .group_by(UsageRecord.room_id)
+    ).all()
+    for room_id, kwh, submissions, appliance_count in usage_totals:
+        metrics = room_usage.get(room_id)
         if metrics is None:
             continue
-        metrics["kwh"] += record.energy_kwh
-        metrics["appliances"].add(record.appliance_id)
-        metrics["submissions"] += 1
+        metrics["kwh"] = float(kwh or 0)
+        metrics["submissions"] = submissions
+        metrics["appliance_count"] = appliance_count
 
     building_totals: dict[str, float] = {}
     building_counts: dict[str, int] = {}
@@ -1046,15 +1110,7 @@ def _room_status(average: float, building_average: float) -> str:
 
 @app.get("/api/admin/rooms", dependencies=[Depends(require_admin)])
 def admin_rooms(db: Session = Depends(get_db)) -> dict:
-    rooms = list(db.scalars(select(ClassroomRoom)))
-    building_order = {"G11": 0, "ADMIN": 1, "G12": 2}
-    rooms.sort(
-        key=lambda room: (
-            building_order.get(room.building_code, 3),
-            room.floor,
-            room.room_index,
-        )
-    )
+    rooms = _ordered_rooms(db)
     room_usage, building_average, room_users = _room_map_stats(db)
 
     buildings = []
@@ -1072,7 +1128,7 @@ def admin_rooms(db: Session = Depends(get_db)) -> dict:
                     "display_name": room.room_name or f"Room {room.room_number}",
                     "display_type": room.custom_type if room.room_type == "custom" else room.room_type,
                     "average_kwh": round(room_average, 4),
-                    "appliance_count": len(metrics["appliances"]),
+                    "appliance_count": metrics["appliance_count"],
                     "submission_count": metrics["submissions"],
                     "assigned_users": room_users[room.id],
                     "building_average_kwh": round(average, 3),
@@ -1118,7 +1174,7 @@ def room_detail(room_id: int, db: Session = Depends(get_db)) -> dict:
         "display_name": room.room_name or f"Room {room.room_number}",
         "display_type": room.custom_type if room.room_type == "custom" else room.room_type,
         "average_kwh": round(average, 4),
-        "appliance_count": len(metrics["appliances"]),
+        "appliance_count": metrics["appliance_count"],
         "submission_count": metrics["submissions"],
         "assigned_users": room_users[room.id],
         "building_average_kwh": round(building, 4),
@@ -1188,7 +1244,6 @@ def add_appliance(payload: ApplianceRequest, db: Session = Depends(get_db)) -> d
     appliance = Appliance(name=name, wattage=payload.wattage)
     db.add(appliance)
     db.commit()
-    db.refresh(appliance)
     return _appliance_dict(appliance)
 
 

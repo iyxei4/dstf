@@ -66,12 +66,14 @@ async function request(path, options = {}) {
   return data;
 }
 
+const phpMoney = new Intl.NumberFormat("en-PH", {
+  style: "currency",
+  currency: "PHP",
+  maximumFractionDigits: 2,
+});
+
 function money(value) {
-  return new Intl.NumberFormat("en-PH", {
-    style: "currency",
-    currency: "PHP",
-    maximumFractionDigits: 2,
-  }).format(value || 0);
+  return phpMoney.format(value || 0);
 }
 
 function roomKwh(value) {
@@ -219,31 +221,47 @@ function RoleChoice() {
   );
 }
 
-// Subscribes to Supabase Realtime changes on a table and calls the latest
-// handler (debounced, so bursts of events trigger a single refresh). When the
-// env vars are missing or the handler is null, it stays inert.
-function useLiveTable(table, handler) {
+// Subscribes to Supabase Realtime changes on one or more tables and calls the
+// latest handler (debounced, so a burst of events across those tables triggers
+// a single refresh). `match` can drop payloads before the debounce — e.g. only
+// this account's row. When the env vars are missing or the handler is null, it
+// stays inert.
+function useLiveTables(tables, handler, match) {
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
+  const matchRef = useRef(match);
+  matchRef.current = match;
   const active = Boolean(handler);
+  const tableKey = tables.join(",");
   useEffect(() => {
     if (!supabase || !active) return undefined;
     let timer = null;
-    const channel = supabase
-      .channel(`live:${table}:${Math.random().toString(36).slice(2)}`)
-      .on("postgres_changes", { event: "*", schema: "public", table }, () => {
-        if (timer) return;
-        timer = window.setTimeout(() => {
-          timer = null;
-          if (handlerRef.current) handlerRef.current();
-        }, 700);
-      })
-      .subscribe();
+    const fire = () => {
+      if (timer) return;
+      timer = window.setTimeout(() => {
+        timer = null;
+        if (handlerRef.current) handlerRef.current();
+      }, 700);
+    };
+    const channel = supabase.channel(
+      `live:${tableKey}:${Math.random().toString(36).slice(2)}`,
+    );
+    for (const table of tableKey.split(",")) {
+      channel.on(
+        "postgres_changes",
+        { event: "*", schema: "public", table },
+        (payload) => {
+          if (matchRef.current && !matchRef.current(payload)) return;
+          fire();
+        },
+      );
+    }
+    channel.subscribe();
     return () => {
       if (timer) window.clearTimeout(timer);
       supabase.removeChannel(channel);
     };
-  }, [table, active]);
+  }, [tableKey, active]);
 }
 
 function SignupPage() {
@@ -509,9 +527,16 @@ function UserPortal() {
     return () => window.clearInterval(timer);
   }, [running]);
 
-  useLiveTable(
-    "classroom_users",
+  // Only this account's row matters here: without the payload filter, every
+  // other account's last_seen heartbeat would reload this whole workspace.
+  // DELETE payloads carry only the row id, so they always pass through — that
+  // keeps the instant sign-out when an admin removes this account.
+  useLiveTables(
+    ["classroom_users"],
     signedIn ? () => loadWorkspace().catch(() => {}) : null,
+    (payload) =>
+      payload.eventType === "DELETE" ||
+      (payload.new?.username ?? payload.old?.username) === username,
   );
 
   async function signIn(event) {
@@ -1209,22 +1234,23 @@ function AdminPortal() {
       .catch(() => {});
   }, []);
 
-  useLiveTable(
-    "classroom_users",
-    admin
-      ? () => {
-          loadDashboard().catch(() => {});
+  // One subscription for both tables: a submission lands as a usage INSERT
+  // plus the account's last_seen UPDATE, and a merged channel refreshes once
+  // instead of once per table. Reports reload only while they are on screen.
+  const reportsRef = useRef(null);
+  reportsRef.current = reports;
+  const monthRef = useRef(month);
+  monthRef.current = month;
+  const reportGroupRef = useRef(reportGroup);
+  reportGroupRef.current = reportGroup;
+  useLiveTables(["classroom_users", "usage_records"], admin
+    ? () => {
+        loadDashboard(monthRef.current).catch(() => {});
+        if (reportsRef.current) {
+          loadReports(reportGroupRef.current, monthRef.current).catch(() => {});
         }
-      : null,
-  );
-  useLiveTable(
-    "usage_records",
-    admin
-      ? () => {
-          loadDashboard().catch(() => {});
-          if (reports) loadReports().catch(() => {});
-        }
-      : null,
+      }
+    : null,
   );
 
   async function signIn(event) {
