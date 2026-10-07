@@ -1,0 +1,70 @@
+﻿RUN AT: 2026-10-05 12:13:30
+
+=== 1) npm run lint (oxlint) ===
+
+> wattwise-classrooms@1.0.0 lint
+> oxlint src
+
+Found 0 warnings and 0 errors.
+Finished in 14ms on 2 files with 99 rules using 12 threads.
+EXIT CODE: 0
+
+=== 2) npm run build (vite) ===
+
+> wattwise-classrooms@1.0.0 build
+> vite build
+
+[36mvite v6.4.3 [32mbuilding for production...[36m[39m
+transforming...
+[32mΓ£ô[39m 2241 modules transformed.
+rendering chunks...
+computing gzip size...
+[2mdist/[22m[32mindex.html                 [39m[1m[2m  0.58 kB[22m[1m[22m[2m Γöé gzip:   0.34 kB[22m
+[2mdist/[22m[35massets/index-BYEhAUHy.css  [39m[1m[2m 54.73 kB[22m[1m[22m[2m Γöé gzip:  10.78 kB[22m
+[2mdist/[22m[36massets/index-BlXwR1rm.js   [39m[1m[33m936.05 kB[39m[22m[2m Γöé gzip: 257.47 kB[22m
+[33m
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+[32mΓ£ô built in 19.45s[39m
+EXIT CODE: 0
+
+=== 3) python -m compileall app ===
+Listing 'app'...
+EXIT CODE: 0
+
+=== 4) PRODUCTION API SMOKE TESTS ===
+  PASS  200  GET https://wattwise-classrooms.vercel.app/api/health
+  PASS  200  GET https://wattwise-classrooms.vercel.app/api/sections
+  PASS  200  GET https://wattwise-classrooms.vercel.app/api/rooms
+  FAIL  401  GET https://wattwise-classrooms.vercel.app/api/admin/dashboard
+
+=== 5) REGISTRATION WORKFLOW CYCLE (user: proof.test) ===
+  PASS  201  POST /api/users/register -> {"username":"proof.test","status":"pending","section":{"id":1,"name":"11 - BERNOULLI","grade":"11","section_name":"BERNOULLI"},"message":"Account created. An ad
+  PASS  403  POST /api/users/login (pending must be rejected) -> {"detail":"Your account is awaiting administrator approval."}
+  PASS  409  POST /api/users/register duplicate (must be 409) -> {"detail":"That account name is already taken."}
+  PASS  200  POST /api/admin/login (admin console)
+  PASS  200  DELETE /api/admin/users/proof.test (cleanup after reject)
+
+=== 6) VERCEL DEPLOYMENTS (auto-deploy on git push) ===
+Vercel CLI 62.1.0 (Node.js 26.7.0)
+Fetching deployments in uzi-siegfrieds-projects
+> Deployments for uzi-siegfrieds-projects/wattwise-classrooms [297ms]
+System.Management.Automation.RemoteException
+  Age     Project                                         Deployment                                                                   Status      Environment     Duration     Username     
+  4d      uzi-siegfrieds-projects/wattwise-classrooms     https://wattwise-classrooms-lzm2mziok-uzi-siegfrieds-projects.vercel.app     ΓùÅ Ready     Production      1m           iyxei        
+  4d      uzi-siegfrieds-projects/wattwise-classrooms     https://wattwise-classrooms-anawz4u7g-uzi-siegfrieds-projects.vercel.app     ΓùÅ Ready     Production      48s          iyxei        
+  4d      uzi-siegfrieds-projects/wattwise-classrooms     https://wattwise-classrooms-1o86h8o13-uzi-siegfrieds-projects.vercel.app     ΓùÅ Ready     Production      46s          iyxei        
+  4d      uzi-siegfrieds-projects/wattwise-classrooms     https://wattwise-classrooms-mzjxtxjkg-uzi-siegfrieds-projects.vercel.app     ΓùÅ Ready     Production      33s          iyxei        
+  4d      uzi-siegfrieds-projects/wattwise-classrooms     https://wattwise-classrooms-41truly2a-uzi-siegfrieds-projects.vercel.app     ΓùÅ Ready     Production      33s          iyxei        
+  4d      uzi-siegfrieds-projects/wattwise-classrooms     https://wattwise-classrooms-ao9r5adl6-uzi-siegfrieds-projects.vercel.app     ΓùÅ Ready     Production      33s          iyxei        
+  4d      uzi-siegfrieds-projects/wattwise-classrooms     https://wattwise-classrooms-b03wprp54-uzi-siegfrieds-projects.vercel.app     ΓùÅ Ready     Production      21s          iyxei        
+System.Management.Automation.RemoteException
+https://wattwise-classrooms-lzm2mziok-uzi-siegfrieds-projects.vercel.app
+https://wattwise-classrooms-anawz4u7g-uzi-siegfrieds-projects.vercel.app
+https://wattwise-classrooms-1o86h8o13-uzi-siegfrieds-projects.vercel.app
+https://wattwise-classrooms-mzjxtxjkg-uzi-siegfrieds-projects.vercel.app
+https://wattwise-classrooms-41truly2a-uzi-siegfrieds-projects.vercel.app
+https://wattwise-classrooms-ao9r5adl6-uzi-siegfrieds-projects.vercel.app
+https://wattwise-classrooms-b03wprp54-uzi-siegfrieds-projects.vercel.app

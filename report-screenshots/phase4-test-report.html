@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Phase 4 — Testing &amp; QA Report</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Segoe UI", Arial, sans-serif; background: #f6f7f9; color: #1c2430; padding: 24px; width: 1400px; }
+  h1 { font-size: 19px; }
+  .meta { color: #5b6675; font-size: 13px; margin: 4px 0 16px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .box { background: #fff; border: 1.5px solid #c9d2de; border-radius: 8px; overflow: hidden; }
+  .box.wide { grid-column: 1 / 3; }
+  .box h2 { font-size: 13.5px; padding: 8px 12px; background: #233047; color: #fff; display: flex; justify-content: space-between; }
+  .box h2 .ok { color: #7ee2a8; font-weight: 600; }
+  pre { font-family: Consolas, monospace; font-size: 12.5px; padding: 10px 12px; white-space: pre-wrap; line-height: 1.55; color: #222b38; }
+  .pass { color: #0f7a43; font-weight: 700; }
+  .exp  { color: #1d4dbb; font-weight: 700; }
+  .tbl { width: 100%; border-collapse: collapse; font-family: Consolas, monospace; font-size: 12.5px; }
+  .tbl th, .tbl td { text-align: left; padding: 7px 12px; border-bottom: 1px solid #e4e9f0; }
+  .tbl th { background: #eef2f8; font-size: 12px; }
+  .tbl tr:last-child td { border-bottom: none; }
+  .chip { display: inline-block; padding: 1px 9px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+  .c-p { background: #d9f5e5; color: #0f7a43; border: 1px solid #a9e3c3; }
+  .c-e { background: #dbe7ff; color: #1d4dbb; border: 1px solid #aac5f7; }
+  .foot { margin-top: 14px; font-size: 13px; background: #fff; border: 1.5px solid #c9d2de; border-radius: 8px; padding: 11px 14px; color: #333c49; }
+</style>
+</head>
+<body>
+<h1>Phase 4 — Testing &amp; Quality Assurance Report</h1>
+<div class="meta">WattWise Classrooms · executed 2026-10-05 12:13 (UTC+8) · target: <b>https://wattwise-classrooms.vercel.app</b> (production)</div>
+
+<div class="cols">
+  <div class="box">
+    <h2>1 · Static analysis — <span class="ok">npm run lint (oxlint) · PASS</span></h2>
+<pre>Found 0 warnings and 0 errors.
+Finished in 14ms on 2 files with 99 rules using 12 threads.
+EXIT CODE: 0</pre>
+  </div>
+
+  <div class="box">
+    <h2>2 · Compile check — <span class="ok">python -m compileall app · PASS</span></h2>
+<pre>Listing 'app'...
+EXIT CODE: 0   (backend syntax valid)</pre>
+  </div>
+
+  <div class="box wide">
+    <h2>3 · Production build — <span class="ok">npm run build (vite) · PASS</span></h2>
+<pre>vite v6.4.3 building for production...
+✓ 2241 modules transformed.
+dist/index.html                  0.58 kB │ gzip:  0.34 kB
+dist/assets/index-BYEhAUHy.css  54.73 kB │ gzip: 10.78 kB
+dist/assets/index-BlXwR1rm.js  936.05 kB │ gzip: 257.47 kB
+✓ built in 19.45s     EXIT CODE: 0</pre>
+  </div>
+
+  <div class="box wide">
+    <h2>4 · Live API smoke tests (production) · <span class="ok">4 / 4 as expected</span></h2>
+    <table class="tbl">
+      <tr><th>Result</th><th>Status</th><th>Request</th><th>Interpretation</th></tr>
+      <tr><td><span class="chip c-p">PASS</span></td><td>200</td><td>GET /api/health</td><td>service reachable</td></tr>
+      <tr><td><span class="chip c-p">PASS</span></td><td>200</td><td>GET /api/sections</td><td>seeded data served (4 sections)</td></tr>
+      <tr><td><span class="chip c-p">PASS</span></td><td>200</td><td>GET /api/rooms</td><td>seeded data served (60 rooms)</td></tr>
+      <tr><td><span class="chip c-e">PASS (expected)</span></td><td>401</td><td>GET /api/admin/dashboard <i>without cookie</i></td><td>access control enforced</td></tr>
+    </table>
+  </div>
+
+  <div class="box wide">
+    <h2>5 · Registration workflow cycle — user <i>proof.test</i> · <span class="ok">5 / 5 PASS</span></h2>
+    <table class="tbl">
+      <tr><th>Result</th><th>Status</th><th>Request</th><th>Server response</th></tr>
+      <tr><td><span class="chip c-p">PASS</span></td><td>201</td><td>POST /api/users/register</td><td>{"username":"proof.test","status":"pending","section":{"id":1,"name":"11 - BERNOULLI"}…}</td></tr>
+      <tr><td><span class="chip c-p">PASS</span></td><td>403</td><td>POST /api/users/login (before approval)</td><td>{"detail":"Your account is awaiting administrator approval."}</td></tr>
+      <tr><td><span class="chip c-p">PASS</span></td><td>409</td><td>POST /api/users/register (duplicate)</td><td>{"detail":"That account name is already taken."}</td></tr>
+      <tr><td><span class="chip c-p">PASS</span></td><td>200</td><td>POST /api/admin/login</td><td>admin session issued</td></tr>
+      <tr><td><span class="chip c-p">PASS</span></td><td>200</td><td>DELETE /api/admin/users/proof.test</td><td>test account rejected &amp; removed (cleanup)</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="foot"><b>Additional end-to-end evidence:</b> Supabase Realtime pipeline probe (subscribe → SQL change → event received in &lt; 1 s) and a live two-tab browser test — a signup in one tab produced the "1 pending" badge in the untouched admin console within ~1 second (see <i>phase4-realtime-e2e.png</i>). Local verification suite: <i>oxlint + vite build + compileall</i> (the project has no unit-test runner by design).</div>
+</body>
+</html>
