@@ -33,9 +33,16 @@ engine = create_engine(
 )
 if DATABASE_URL.startswith("sqlite"):
     @event.listens_for(engine, "connect")
-    def enable_sqlite_foreign_keys(connection, _record):
+    def configure_sqlite(connection, _record):
         cursor = connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        # WAL lets dashboard reads run while a usage record is being written,
+        # and NORMAL durability is the standard WAL pairing (safe on power loss
+        # except in the last transaction). Together they keep the API responsive
+        # under concurrent user + admin traffic.
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
         cursor.close()
 
 

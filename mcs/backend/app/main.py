@@ -12,7 +12,7 @@ from typing import Literal
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import String, cast, func, inspect, select
+from sqlalchemy import String, cast, delete, func, inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -28,6 +28,10 @@ SESSION_COOKIE = "wattwise_admin"
 USER_SESSION_COOKIE = "wattwise_user"
 SESSION_SECONDS = 8 * 60 * 60
 PASSWORD_ITERATIONS = 310_000
+# Single source of truth for energy precision. kWh is rounded once to this many
+# decimals and every bill is derived from that already-rounded value, so a
+# client showing "0.1875 kWh x 12" always gets the ₱2.25 the API reports.
+KWH_PRECISION = 4
 # Extended-use / anomaly thresholds. A session counts as extended-use at or
 # above a full school day; it counts as unusual past twice the appliance's
 # all-time mean, requiring a minimum history before the comparison applies.
@@ -111,6 +115,9 @@ class SectionAssignmentRequest(BaseModel):
 class ApplianceRequest(BaseModel):
     name: str = Field(min_length=2, max_length=80)
     wattage: float = Field(gt=0, le=100_000)
+    # How many identical units this row covers; the connected load is
+    # wattage x quantity.
+    quantity: int = Field(default=1, ge=1, le=999)
 
 
 class UsageRequest(BaseModel):
@@ -224,7 +231,16 @@ def _section_dict(section: ClassroomSection) -> dict:
 
 
 def _appliance_dict(appliance: Appliance) -> dict:
-    return {"id": appliance.id, "name": appliance.name, "wattage": appliance.wattage}
+    # connected_watts is what the UI and the energy formula use; keeping it on
+    # the payload means the client never has to redo the multiplication.
+    quantity = appliance.quantity or 1
+    return {
+        "id": appliance.id,
+        "name": appliance.name,
+        "wattage": appliance.wattage,
+        "quantity": quantity,
+        "connected_watts": round(appliance.wattage * quantity, 4),
+    }
 
 
 def _room_identity(room: ClassroomRoom) -> dict:
@@ -239,6 +255,25 @@ def _room_identity(room: ClassroomRoom) -> dict:
         "custom_type": room.custom_type,
         "room_name": room.room_name,
     }
+
+
+def _usage_moment(record: UsageRecord) -> datetime:
+    """When the energy was actually used, falling back to submission time.
+
+    A custom-time entry carries the date the teacher picks, so reports bucket by
+    usage date rather than by when the row happened to be written.
+    """
+    return record.started_at or record.created_at
+
+
+def _kwh_and_bill(kwh: float) -> tuple[float, float]:
+    """Round kWh once, then derive the bill from that same value.
+
+    Keeping the rounding in one place is what guarantees the invariant a reader
+    checks by hand: displayed_kwh * ELECTRICITY_RATE == displayed_bill.
+    """
+    rounded = round(kwh or 0.0, KWH_PRECISION)
+    return rounded, round(rounded * ELECTRICITY_RATE, 2)
 
 
 def _record_dict(
@@ -256,6 +291,8 @@ def _record_dict(
     section = section or record.section
     appliance = appliance or record.appliance
     started = record.started_at or (record.created_at - timedelta(hours=record.hours))
+    energy_kwh, estimated_cost = _kwh_and_bill(record.energy_kwh)
+    quantity = appliance.quantity or 1
     return {
         "id": record.id,
         "username": user.username,
@@ -265,9 +302,11 @@ def _record_dict(
         "appliance": appliance.name,
         "appliance_id": record.appliance_id,
         "wattage": appliance.wattage,
+        "quantity": quantity,
+        "connected_watts": round(appliance.wattage * quantity, 4),
         "hours": record.hours,
-        "energy_kwh": record.energy_kwh,
-        "estimated_cost_php": round(record.energy_kwh * ELECTRICITY_RATE, 2),
+        "energy_kwh": energy_kwh,
+        "estimated_cost_php": estimated_cost,
         "occupants": record.occupants,
         "started_at": started.isoformat(),
         "created_at": record.created_at.isoformat(),
@@ -334,6 +373,12 @@ def initialize_database() -> None:
                 "ALTER TABLE appliances ADD COLUMN archived BOOLEAN NOT NULL DEFAULT 0"
             )
             connection.exec_driver_sql("UPDATE appliances SET archived = 0")
+        if "quantity" not in appliance_columns:
+            # Existing rows represent a single unit.
+            connection.exec_driver_sql(
+                "ALTER TABLE appliances ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1"
+            )
+            connection.exec_driver_sql("UPDATE appliances SET quantity = 1")
         # Composite indexes for the hot read paths: a user's recent submissions
         # (user_id, created_at) and the trailing-30-day room map
         # (room_id, created_at). IF NOT EXISTS keeps every cold start a catalog
@@ -347,20 +392,6 @@ def initialize_database() -> None:
             "ON usage_records (room_id, created_at)"
         )
     with SessionLocal() as db:
-        if not db.scalar(select(ClassroomSection.id).limit(1)):
-            db.add_all(
-                ClassroomSection(
-                    name=f"{grade} - {section_name}",
-                    grade=grade,
-                    section_name=section_name,
-                )
-                for grade, section_name in (
-                    ("11", "BERNOULLI"),
-                    ("11", "ARISTOTLE"),
-                    ("12", "BERNOULLI"),
-                    ("12", "ARISTOTLE"),
-                )
-            )
         # Backfill structured fields for legacy rows created as "11 - BERNOULLI".
         for section in db.scalars(select(ClassroomSection)):
             if section.grade or not section.name:
@@ -369,15 +400,86 @@ def initialize_database() -> None:
             if separator and head.strip().isdigit() and tail.strip():
                 section.grade = head.strip()
                 section.section_name = tail.strip()
+        # Older rows may still have NULL grade/section_name after backfill, so
+        # key on both the structured pair and the display label: a row can hold
+        # one without the other, and a mismatch would otherwise trip the unique
+        # index on name when we insert "11 - BERNOULLI".
+        existing_pairs: set[tuple[str | None, str]] = set()
+        existing_names: set[str] = set()
+        for section in db.scalars(select(ClassroomSection)):
+            existing_pairs.add(
+                (section.grade, (section.section_name or "").upper())
+            )
+            if section.name:
+                existing_names.add(section.name.upper())
+        all_sections_data = [
+            # Grade 11
+            ("11", "ENTREPRENEURS"),
+            ("11", "COMMERCE"),
+            ("11", "BLOOM"),
+            ("11", "PATRIOTS"),
+            ("11", "SAPIENTIA"),
+            ("11", "ADLER"),
+            ("11", "ARISTOTLE"),
+            ("11", "BERNOULLI"),
+            ("11", "CHATTERTON"),
+            ("11", "H.DIAZ"),
+            ("11", "CROISSANT"),
+            ("11", "CANNOLI"),
+            ("11", "MICHELIN"),
+            ("11", "ERUDITE"),
+            ("11", "DRIVEN"),
+            ("11", "DILIGENT"),
+            ("11", "ANALYTICAL"),
+            ("11", "ALCARAZ"),
+            ("11", "ASPIRANT"),
+            ("11", "DREAMER"),
+            # Grade 12
+            ("12", "PACIOLI"),
+            ("12", "SCHUMPETER"),
+            ("12", "EINSTEIN"),
+            ("12", "NEWTON"),
+            ("12", "YULO"),
+            ("12", "AUSTEN"),
+            ("12", "BLUMER"),
+            ("12", "DURKHEIM"),
+            ("12", "A. CUDDY"),
+            ("12", "E. ERIKSON"),
+            ("12", "FREIRE"),
+            ("12", "SEDULOUS"),
+            ("12", "ASSIDUOUS"),
+            ("12", "INNOVATIVE"),
+            ("12", "EFFICIENT"),
+            ("12", "ORGANIZED"),
+            ("12", "VANGUARD"),
+            ("12", "VISIONARY"),
+            ("12", "MARTIAN"),
+            # Grade 11/12 ALS / SNED
+            ("11", "HAWKING/KELLER"),
+            ("12", "HAWKING/KELLER"),
+        ]
+        for grade, sec_name in all_sections_data:
+            display = f"{grade} - {sec_name}"
+            if (grade, sec_name) in existing_pairs or display.upper() in existing_names:
+                continue
+            db.add(ClassroomSection(
+                name=display,
+                grade=grade,
+                section_name=sec_name,
+            ))
         if not db.scalar(select(Appliance.id).limit(1)):
+            # Approved appliance table, in watts. Classroom set:
+            # 2 x Electric fan + 1 x TV + 1 x Water Dispenser = 710 W, which is
+            # 2.84 kWh / 5.68 kWh / 8.52 kWh over 4 h / 8 h / 12 h.
             db.add_all(
                 Appliance(name=name, wattage=wattage)
                 for name, wattage in (
-                    ("LED lights", 40),
-                    ("Electric fan", 75),
-                    ("Projector", 300),
-                    ("Desktop computer", 180),
-                    ("Air conditioner", 1200),
+                    ("Electric fan", 55),
+                    ("TV", 100),
+                    ("Printer", 100),
+                    ("Water Dispenser", 500),
+                    ("Linear Fluorescent Light", 40),
+                    ("Desktop Computer", 135),
                 )
             )
         if not db.scalar(select(ClassroomRoom.id).limit(1)):
@@ -410,13 +512,23 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _catalog_cache(response: Response) -> None:
+    # Catalogs (sections, appliances, rooms) change rarely and are read by
+    # every visitor, so let the browser serve them for a minute instead of
+    # paying a round trip to the API each page load.
+    response.headers["Cache-Control"] = "public, max-age=60"
+    response.headers["Vary"] = "Accept-Encoding"
+
+
 @app.get("/api/sections")
-def list_sections(db: Session = Depends(get_db)) -> list[dict]:
+def list_sections(response: Response, db: Session = Depends(get_db)) -> list[dict]:
+    _catalog_cache(response)
     return [_section_dict(item) for item in db.scalars(select(ClassroomSection).order_by(ClassroomSection.name))]
 
 
 @app.get("/api/appliances")
-def list_appliances(db: Session = Depends(get_db)) -> list[dict]:
+def list_appliances(response: Response, db: Session = Depends(get_db)) -> list[dict]:
+    _catalog_cache(response)
     return [
         _appliance_dict(item)
         for item in db.scalars(
@@ -440,7 +552,8 @@ def _ordered_rooms(db: Session) -> list[ClassroomRoom]:
 
 
 @app.get("/api/rooms")
-def list_room_choices(db: Session = Depends(get_db)) -> list[dict]:
+def list_room_choices(response: Response, db: Session = Depends(get_db)) -> list[dict]:
+    _catalog_cache(response)
     return [_room_identity(room) for room in _ordered_rooms(db)]
 
 
@@ -453,8 +566,35 @@ def create_user_appliance(
     name = " ".join(payload.name.split())
     if db.scalar(select(Appliance.id).where(func.lower(Appliance.name) == name.lower())):
         raise HTTPException(status_code=409, detail="That appliance already exists.")
-    appliance = Appliance(name=name, wattage=payload.wattage)
+    appliance = Appliance(name=name, wattage=payload.wattage, quantity=payload.quantity)
     db.add(appliance)
+    db.commit()
+    return _appliance_dict(appliance)
+
+
+@app.put("/api/appliances/{appliance_id}")
+def update_user_appliance(
+    appliance_id: int,
+    payload: ApplianceRequest,
+    _: ClassroomUser = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Let the owning workspace re-type an appliance (name, wattage, quantity)."""
+    appliance = db.get(Appliance, appliance_id)
+    if appliance is None:
+        raise HTTPException(status_code=404, detail="Appliance not found.")
+    name = " ".join(payload.name.split())
+    clash = db.scalar(
+        select(Appliance.id).where(
+            func.lower(Appliance.name) == name.lower(),
+            Appliance.id != appliance.id,
+        )
+    )
+    if clash:
+        raise HTTPException(status_code=409, detail="That appliance already exists.")
+    appliance.name = name
+    appliance.wattage = payload.wattage
+    appliance.quantity = payload.quantity
     db.commit()
     return _appliance_dict(appliance)
 
@@ -517,6 +657,9 @@ def user_login(
         "username": user.username,
         "section": _section_dict(user.section) if user.section else None,
         "assigned_room": _room_identity(room) if room else None,
+        # The client previews estimated bills before submitting, so it needs
+        # the same rate the server will apply to the stored record.
+        "rate_php_per_kwh": ELECTRICITY_RATE,
     }
 
 
@@ -567,6 +710,7 @@ def user_session(
         "username": user.username,
         "section": _section_dict(user.section) if user.section else None,
         "assigned_room": _room_identity(room) if room else None,
+        "rate_php_per_kwh": ELECTRICITY_RATE,
     }
 
 
@@ -618,13 +762,15 @@ def create_record(
     started_at = payload.started_at
     if started_at is not None and started_at.tzinfo is not None:
         started_at = started_at.astimezone(timezone.utc).replace(tzinfo=None)
+    # E = P x t / 1000, where P is the whole connected load (unit watts x units).
+    connected_watts = appliance.wattage * (appliance.quantity or 1)
     record = UsageRecord(
         user_id=user.id,
         section_id=section.id,
         room_id=room.id if room else None,
         appliance_id=appliance.id,
         hours=payload.hours,
-        energy_kwh=round(appliance.wattage * payload.hours / 1000, 4),
+        energy_kwh=round(connected_watts * payload.hours / 1000, 4),
         occupants=payload.occupants,
         started_at=started_at or (now - timedelta(hours=payload.hours)),
         created_at=now,
@@ -816,11 +962,12 @@ def admin_dashboard(month: str | None = None, db: Session = Depends(get_db)) -> 
     monthly = []
     for bucket_start in bucket_starts:
         total = monthly_kwh.get(bucket_start.strftime("%Y-%m"), 0)
+        kwh, bill = _kwh_and_bill(total)
         monthly.append(
             {
                 "month": bucket_start.strftime("%b %Y"),
-                "kwh": round(total, 2),
-                "bill": round(total * ELECTRICITY_RATE, 2),
+                "kwh": kwh,
+                "bill": bill,
             }
         )
     user_rows = db.execute(
@@ -833,44 +980,30 @@ def admin_dashboard(month: str | None = None, db: Session = Depends(get_db)) -> 
             selectinload(ClassroomUser.assigned_room),
         )
     ).all()
-    stats = _appliance_hour_stats(db, (record.appliance_id for record in records))
-    alerts: list[dict] = []
-    for record in records:
-        flags = _usage_flags(record.hours, stats.get(record.appliance_id))
-        if not flags:
-            continue
-        reason = (
-            "Session ran {0:g} hours (school-day threshold is {1:g}).".format(
-                record.hours, EXTENDED_USE_HOURS
-            )
-            if "extended-use" in flags
-            else "Session is unusually long for {0}.".format(record.appliance.name)
-        )
-        alerts.append({**_record_dict(record, stats, flags=flags), "reasons": [reason]})
-        if len(alerts) == 20:
-            break
     user_count, section_count = db.execute(
         select(
             select(func.count()).select_from(ClassroomUser).scalar_subquery(),
             select(func.count()).select_from(ClassroomSection).scalar_subquery(),
         )
     ).one()
+    dashboard_kwh, dashboard_bill = _kwh_and_bill(total_kwh)
+    section_rows = []
+    for name, total in sorted(
+        section_totals.items(), key=lambda item: item[1], reverse=True
+    ):
+        kwh, bill = _kwh_and_bill(total)
+        section_rows.append({"name": name, "kwh": kwh, "bill": bill})
     return {
         "month": month,
         "rate_php_per_kwh": ELECTRICITY_RATE,
-        "total_kwh": round(total_kwh, 2),
-        "estimated_bill_php": round(total_kwh * ELECTRICITY_RATE, 2),
+        "total_kwh": dashboard_kwh,
+        "estimated_bill_php": dashboard_bill,
         "record_count": len(records),
         "user_count": user_count,
         "section_count": section_count,
         "highest_section": max(section_totals, key=section_totals.get) if section_totals else None,
         "monthly": monthly,
-        "sections": [
-            {"name": name, "kwh": round(kwh, 2), "bill": round(kwh * ELECTRICITY_RATE, 2)}
-            for name, kwh in sorted(section_totals.items(), key=lambda item: item[1], reverse=True)
-        ],
-        "records": [_record_dict(record, stats) for record in records[:100]],
-        "alerts": alerts,
+        "sections": section_rows,
         "users": [
             {
                 "username": user.username,
@@ -897,18 +1030,45 @@ def admin_dashboard(month: str | None = None, db: Session = Depends(get_db)) -> 
 def admin_reports(
     month: str | None = None,
     group: str = "day",
+    building: str | None = None,
+    room_id: int | None = None,
+    section_id: int | None = None,
+    appliance_id: int | None = None,
     db: Session = Depends(get_db),
 ) -> dict:
-    """Daily / weekly / monthly usage buckets plus usage patterns for a month."""
+    """Daily / weekly / monthly usage buckets plus usage patterns for a month.
+
+    Optional criteria narrow the report to one building, room, section, or
+    appliance; an empty report is a valid answer rather than an error.
+    """
     if group not in ("day", "week", "month"):
         raise HTTPException(status_code=422, detail="Group must be day, week, or month.")
     now = datetime.now()
     month = month or now.strftime("%Y-%m")
     start, end = _month_bounds(month)
+
+    filters = []
+    if building:
+        filters.append(
+            UsageRecord.room_id.in_(
+                select(ClassroomRoom.id).where(ClassroomRoom.building_code == building)
+            )
+        )
+    if room_id:
+        filters.append(UsageRecord.room_id == room_id)
+    if section_id:
+        filters.append(UsageRecord.section_id == section_id)
+    if appliance_id:
+        filters.append(UsageRecord.appliance_id == appliance_id)
+
     records = list(
         db.scalars(
             select(UsageRecord)
-            .where(UsageRecord.created_at >= start, UsageRecord.created_at < end)
+            .where(
+                UsageRecord.created_at >= start,
+                UsageRecord.created_at < end,
+                *filters,
+            )
             .options(
                 joinedload(UsageRecord.user),
                 joinedload(UsageRecord.section),
@@ -950,13 +1110,13 @@ def admin_reports(
         month_records = list(
             db.scalars(
                 select(UsageRecord)
-                .where(UsageRecord.created_at >= earliest_start)
+                .where(UsageRecord.created_at >= earliest_start, *filters)
                 .options(joinedload(UsageRecord.appliance))
                 .order_by(UsageRecord.created_at)
             )
         )
         for record in month_records:
-            key = record.created_at.strftime("%Y-%m")
+            key = _usage_moment(record).strftime("%Y-%m")
             if key in bucketed:
                 bucketed[key].append(record)
     else:
@@ -969,17 +1129,18 @@ def admin_reports(
                 bucketed[monday.strftime("%Y-%m-%d")] = []
                 monday += timedelta(days=7)
         for record in records:
-            bucketed.setdefault(bucket_key(record.created_at), []).append(record)
+            bucketed.setdefault(bucket_key(_usage_moment(record)), []).append(record)
 
     def summarize(rows: list[UsageRecord]) -> dict:
         top: dict[str, float] = {}
         for record in rows:
             top[record.appliance.name] = top.get(record.appliance.name, 0) + record.energy_kwh
         kwh = sum(record.energy_kwh for record in rows)
+        rounded_kwh, bill = _kwh_and_bill(kwh)
         return {
             "sessions": len(rows),
-            "kwh": round(kwh, 2),
-            "bill": round(kwh * ELECTRICITY_RATE, 2),
+            "kwh": rounded_kwh,
+            "bill": bill,
             "top_appliance": max(top, key=top.get) if top else None,
         }
 
@@ -1015,27 +1176,56 @@ def admin_reports(
     patterns = {
         "peak_weekday": (
             {"day": day_name[max(range(7), key=lambda index: weekday_kwh[index])],
-             "kwh": round(max(weekday_kwh), 2)}
+             "kwh": round(max(weekday_kwh), KWH_PRECISION)}
             if records else None
         ),
         "peak_hour": (
             {"hour": hour_label(max(range(24), key=lambda index: hour_kwh[index])),
-             "kwh": round(max(hour_kwh), 2)}
+             "kwh": round(max(hour_kwh), KWH_PRECISION)}
             if records else None
         ),
         "top_appliance": (
             {"name": max(appliance_kwh, key=appliance_kwh.get),
-             "kwh": round(max(appliance_kwh.values()), 2)}
+             "kwh": round(max(appliance_kwh.values()), KWH_PRECISION)}
             if appliance_kwh else None
         ),
         "busiest_room": (
             {"room": max(room_kwh, key=room_kwh.get),
-             "kwh": round(max(room_kwh.values()), 2)}
+             "kwh": round(max(room_kwh.values()), KWH_PRECISION)}
             if room_kwh else None
         ),
         "avg_occupants": round(occupant_total / occupant_count, 1) if occupant_count else None,
     }
-    return {"month": month, "group": group, "buckets": buckets, "patterns": patterns}
+    total_kwh = sum(record.energy_kwh for record in records)
+    report_kwh, report_bill = _kwh_and_bill(total_kwh)
+    return {
+        "month": month,
+        "group": group,
+        "buckets": buckets,
+        "patterns": patterns,
+        "criteria": {
+            "building": building,
+            "room_id": room_id,
+            "section_id": section_id,
+            "appliance_id": appliance_id,
+        },
+        "total_kwh": report_kwh,
+        "total_bill": report_bill,
+        "session_count": len(records),
+        # Rankings power the report search box ("which room uses the most?").
+        "room_ranking": [
+            {"room": name, "kwh": round(value, KWH_PRECISION)}
+            for name, value in sorted(
+                room_kwh.items(), key=lambda item: item[1], reverse=True
+            )
+        ],
+        "appliance_ranking": [
+            {"name": name, "kwh": round(value, KWH_PRECISION)}
+            for name, value in sorted(
+                appliance_kwh.items(), key=lambda item: item[1], reverse=True
+            )
+        ],
+    }
 
 
 @app.post("/api/admin/sections", status_code=201, dependencies=[Depends(require_admin)])
@@ -1241,7 +1431,7 @@ def add_appliance(payload: ApplianceRequest, db: Session = Depends(get_db)) -> d
     name = " ".join(payload.name.split())
     if db.scalar(select(Appliance.id).where(func.lower(Appliance.name) == name.lower())):
         raise HTTPException(status_code=409, detail="That appliance already exists.")
-    appliance = Appliance(name=name, wattage=payload.wattage)
+    appliance = Appliance(name=name, wattage=payload.wattage, quantity=payload.quantity)
     db.add(appliance)
     db.commit()
     return _appliance_dict(appliance)
@@ -1254,6 +1444,7 @@ def update_appliance(appliance_id: int, payload: ApplianceRequest, db: Session =
         raise HTTPException(status_code=404, detail="Appliance not found.")
     appliance.name = " ".join(payload.name.split())
     appliance.wattage = payload.wattage
+    appliance.quantity = payload.quantity
     db.commit()
     return _appliance_dict(appliance)
 
@@ -1278,6 +1469,72 @@ def delete_appliance(appliance_id: int, db: Session = Depends(get_db)) -> dict[s
         db.rollback()
         raise HTTPException(status_code=409, detail="This appliance has usage records and cannot be removed.") from error
     return {"status": "appliance removed"}
+
+
+# --- One-shot maintenance ---------------------------------------------------
+# Destructive: wipes usage history, prunes accounts, and replaces the appliance
+# catalog. Admin-only, and every step is skipped unless explicitly requested,
+# so calling it with an empty payload is a no-op.
+class MaintenanceResetRequest(BaseModel):
+    keep_users: list[str] = Field(default_factory=list)
+    appliances: list[ApplianceRequest] = Field(default_factory=list)
+    wipe_records: bool = False
+    replace_appliances: bool = False
+
+
+@app.post("/api/admin/maintenance/reset", dependencies=[Depends(require_admin)])
+def maintenance_reset(
+    payload: MaintenanceResetRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    deleted_records = 0
+    if payload.wipe_records:
+        result = db.execute(delete(UsageRecord))
+        deleted_records = result.rowcount or 0
+
+    deleted_users: list[str] = []
+    if payload.keep_users:
+        keep = {" ".join(name.split()).lower() for name in payload.keep_users}
+        for user in list(db.scalars(select(ClassroomUser))):
+            if user.username.strip().lower() in keep:
+                continue
+            deleted_users.append(user.username)
+            db.delete(user)
+
+    replaced_appliances: list[str] = []
+    if payload.replace_appliances:
+        for appliance in list(db.scalars(select(Appliance))):
+            replaced_appliances.append(appliance.name)
+            db.delete(appliance)
+        # Flush the deletes before inserting so the unique name index cannot
+        # collide with a row that is still pending removal in this transaction.
+        db.flush()
+        for item in payload.appliances:
+            db.add(
+                Appliance(
+                    name=" ".join(item.name.split()),
+                    wattage=item.wattage,
+                    quantity=item.quantity,
+                )
+            )
+
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Maintenance reset failed and was rolled back.",
+        ) from error
+
+    return {
+        "deleted_records": deleted_records,
+        "deleted_users": sorted(deleted_users),
+        "replaced_appliances": sorted(replaced_appliances),
+        "kept_users": sorted(
+            " ".join(item.split()) for item in payload.keep_users
+        ),
+    }
 
 
 # --- Serve the built React frontend (production / Render) -------------------

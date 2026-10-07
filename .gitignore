@@ -11,6 +11,11 @@ __pycache__/
 # Databases (seeded/local data)
 *.db
 *.sqlite3
+*.db-wal
+*.db-shm
+
+# Local production data dumps (may contain real account data)
+production-backup-*.json
 
 # Secrets / local config
 .env

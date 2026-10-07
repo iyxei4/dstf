@@ -10,6 +10,7 @@ import {
   Check,
   ChevronDown,
   ClipboardList,
+  Clock3,
   DoorOpen,
   LogOut,
   Moon,
@@ -17,6 +18,7 @@ import {
   Power,
   ShieldCheck,
   Search,
+  Settings,
   Sun,
   Trash2,
   UserPlus,
@@ -36,6 +38,40 @@ import {
 } from "recharts";
 
 const API = "/api";
+// Mirrors the backend UsageRequest.hours ceiling (le=24). The live preview and
+// the ON/OFF timer both clamp to this so what a user sees on screen is exactly
+// what POST /api/records will store.
+const MAX_HOURS = 24;
+
+// Preset appliance catalog, from the approved table. `watts` feeds straight
+// into E = P x t / 1000. The classroom set the school tests with:
+//   2 x Electric fan + 1 x TV + 1 x Water Dispenser
+//   = 2(55) + 100 + 500 = 710 W connected load
+// and over time: 4h -> 2.84 kWh, 8h -> 5.68 kWh, 12h -> 8.52 kWh.
+const APPLIANCE_PRESETS = [
+  { name: "Electric fan", watts: 55 },
+  { name: "TV", watts: 100 },
+  { name: "Printer", watts: 100 },
+  { name: "Water Dispenser", watts: 500 },
+  { name: "Linear Fluorescent Light", watts: 40 },
+  { name: "Desktop Computer", watts: 135 },
+];
+
+// Watts are the stored unit; kWh per hour of use is watts / 1000. Both are
+// shown so figures can be read against either the table or the formula.
+function kwhPerHourOf(watts) {
+  return Number(((watts || 0) / 1000).toFixed(4));
+}
+
+
+// <input type="date"> wants a local YYYY-MM-DD string; toISOString() would
+// shift the day for anyone east of UTC, so build it from local parts.
+function localDateValue(date = new Date()) {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const supabase =
@@ -76,12 +112,48 @@ function money(value) {
   return phpMoney.format(value || 0);
 }
 
+// kWh values arrive already rounded to the API's KWH_PRECISION. Show that exact
+// value (trailing zeros trimmed) so a reader can multiply it by the rate and
+// land on the same bill the API reported.
+function kwhText(value) {
+  const text = Number(value || 0).toFixed(4);
+  return text.replace(/\.?0+$/, "") || "0";
+}
+
+// Connected load of one appliance row: unit wattage x how many units it covers
+// ("2 electric fans" is one row with quantity 2). Prefers the server-computed
+// connected_watts so the client never disagrees with the API.
+function connectedWattsOf(appliance) {
+  if (!appliance) return 0;
+  return typeof appliance.connected_watts === "number"
+    ? appliance.connected_watts
+    : appliance.wattage * (appliance.quantity || 1);
+}
+
 function roomKwh(value) {
   if (!value) return "0.0";
   if (value < 0.0001) return "<0.0001";
   if (value < 0.01) return value.toFixed(4);
   if (value < 1) return value.toFixed(3);
   return value.toFixed(2);
+}
+
+// Sections arrive as "11 - BERNOULLI"; group them for <optgroup> so a
+// 40-plus item catalog stays navigable in a plain <select>.
+function groupSectionsByGrade(sections) {
+  const groups = new Map();
+  sections.forEach((section) => {
+    const grade = section.grade || section.name.split(" - ")[0] || "";
+    if (!groups.has(grade)) groups.set(grade, []);
+    groups.get(grade).push(section);
+  });
+  return [...groups.entries()]
+    .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+    .map(([grade, items]) => ({
+      grade,
+      label: grade ? `Grade ${grade}` : "Other",
+      items,
+    }));
 }
 
 function Brand({ compact = false }) {
@@ -214,6 +286,8 @@ function RoleChoice() {
           SUBMITTED
         </span>
         <span>
+          <a href="/mcs/about">ABOUT THIS APP</a>
+          <span className="footer-sep">·</span>
           WATTWISE MCS <span className="footer-year">/ 2026</span>
         </span>
       </footer>
@@ -396,10 +470,14 @@ function SignupPage() {
               required
             >
               {sections.length ? (
-                sections.map((section) => (
-                  <option key={section.id} value={section.id}>
-                    {section.name}
-                  </option>
+                groupSectionsByGrade(sections).map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.items.map((section) => (
+                      <option key={section.id} value={section.id}>
+                        {section.name}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))
               ) : (
                 <option value="">No sections available</option>
@@ -474,9 +552,17 @@ function UserPortal() {
   const [records, setRecords] = useState([]);
   const [roomId, setRoomId] = useState("");
   const [occupants, setOccupants] = useState("");
-  const [showApplianceForm, setShowApplianceForm] = useState(false);
-  const [applianceName, setApplianceName] = useState("");
-  const [applianceWatts, setApplianceWatts] = useState(100);
+  const [showManualForm, setShowManualForm] = useState(false);
+  const [manualAppliance, setManualAppliance] = useState("");
+  const [manualHours, setManualHours] = useState("");
+  // Defaults to today; the picker lets a teacher backfill the real usage date.
+  const [manualDate, setManualDate] = useState(() => localDateValue());
+  // User settings drawer: appliance add/remove lives here now.
+  const [showSettings, setShowSettings] = useState(false);
+  const [presetChoice, setPresetChoice] = useState("");
+  // Mirrors MCS_ELECTRICITY_RATE from the API so the live preview shows the
+  // exact bill the server will compute, never a hardcoded guess.
+  const [ratePerKwh, setRatePerKwh] = useState(12);
   const [running, setRunning] = useState(() => {
     try {
       const account = localStorage.getItem("wattwise-user") || "";
@@ -492,6 +578,47 @@ function UserPortal() {
   const [success, setSuccess] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Manual-entry preview: E = P × t ÷ 1000, then bill = kWh × rate. Hours are
+  // clamped to the same ceiling the API enforces, so the preview always
+  // matches the stored record.
+  const manualApplianceRow = appliances.find(
+    (item) => String(item.id) === manualAppliance,
+  );
+  const manualHoursValue = Math.min(
+    MAX_HOURS,
+    Math.max(0, Number.parseFloat(manualHours) || 0),
+  );
+  const manualKwh = manualApplianceRow
+    ? Number(
+        (
+          (connectedWattsOf(manualApplianceRow) * manualHoursValue) /
+          1000
+        ).toFixed(4),
+      )
+    : 0;
+  const manualBill = manualKwh * ratePerKwh;
+  const manualValid =
+    Boolean(manualApplianceRow) && manualHoursValue > 0 && Boolean(manualDate);
+
+  // Connected load: the whole classroom's wattage, i.e. SUM(unit W x units).
+  // This is the P that E = P x t / 1000 uses when every appliance runs.
+  const connectedWatts = appliances.reduce(
+    (sum, item) => sum + connectedWattsOf(item),
+    0,
+  );
+
+  // Settings: presets the workspace has not added yet, so the picker never
+  // offers a duplicate.
+  const takenNames = new Set(
+    appliances.map((item) => item.name.trim().toLowerCase()),
+  );
+  const availablePresets = APPLIANCE_PRESETS.filter(
+    (preset) => !takenNames.has(preset.name.toLowerCase()),
+  );
+  const presetRow = APPLIANCE_PRESETS.find(
+    (preset) => preset.name === presetChoice,
+  );
+
   async function loadWorkspace() {
     const [nextAppliances, nextRecords, session] = await Promise.all([
       request("/appliances"),
@@ -503,6 +630,7 @@ function UserPortal() {
     setAssignedRoom(session.assigned_room);
     setRoomId(session.assigned_room ? String(session.assigned_room.id) : "");
     setAccountSection(session.section || null);
+    if (session.rate_php_per_kwh) setRatePerKwh(session.rate_php_per_kwh);
   }
 
   useEffect(() => {
@@ -553,6 +681,7 @@ function UserPortal() {
       setAssignedRoom(account.assigned_room);
       setRoomId(account.assigned_room ? String(account.assigned_room.id) : "");
       setAccountSection(account.section || null);
+      if (account.rate_php_per_kwh) setRatePerKwh(account.rate_php_per_kwh);
       localStorage.setItem("wattwise-user", account.username);
       try {
         setRunning(
@@ -572,31 +701,72 @@ function UserPortal() {
     }
   }
 
-  async function addAppliance(event) {
+  async function addPresetAppliance(event) {
     event.preventDefault();
+    if (!presetRow) return;
     setBusy(true);
     setNotice("");
     setSuccess("");
     try {
       const created = await request("/appliances", {
         method: "POST",
-        body: JSON.stringify({
-          name: applianceName,
-          wattage: Number(applianceWatts),
-        }),
+        body: JSON.stringify({ name: presetRow.name, wattage: presetRow.watts }),
       });
       setAppliances((current) =>
         [...current, created].sort((a, b) => a.name.localeCompare(b.name)),
       );
-      setApplianceName("");
-      setApplianceWatts(100);
-      setShowApplianceForm(false);
-      setSuccess(`${created.name} added to the appliance list.`);
+      setPresetChoice("");
+      setSuccess(`${created.name} added at ${created.wattage} W.`);
     } catch (error) {
       setNotice(error.message);
     } finally {
       setBusy(false);
     }
+  }
+
+  // One save path for the settings table: changing the type, the unit count,
+  // or both re-uses it so the PUT payload can never drop a field.
+  async function saveAppliance(appliance, patch) {
+    setBusy(true);
+    setNotice("");
+    setSuccess("");
+    try {
+      const updated = await request(`/appliances/${appliance.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: patch.name ?? appliance.name,
+          wattage: patch.wattage ?? appliance.wattage,
+          quantity: patch.quantity ?? (appliance.quantity || 1),
+        }),
+      });
+      setAppliances((current) =>
+        current
+          .map((item) => (item.id === updated.id ? updated : item))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      );
+      setSuccess(
+        `${updated.name} · ${updated.quantity} × ${updated.wattage} W = ` +
+          `${updated.connected_watts} W connected.`,
+      );
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Re-typing a row updates its name and wattage, so every future kWh
+  // calculation for that appliance uses the new rating.
+  function updateApplianceType(appliance, presetName) {
+    const preset = APPLIANCE_PRESETS.find((item) => item.name === presetName);
+    if (!preset || preset.name === appliance.name) return;
+    saveAppliance(appliance, { name: preset.name, wattage: preset.watts });
+  }
+
+  function updateApplianceQuantity(appliance, value) {
+    const quantity = Math.max(1, Math.min(999, Math.floor(Number(value) || 1)));
+    if (quantity === (appliance.quantity || 1)) return;
+    saveAppliance(appliance, { quantity });
   }
 
   async function removeAppliance(appliance) {
@@ -647,7 +817,7 @@ function UserPortal() {
     setSuccess("");
     try {
       const elapsedHours = Math.min(
-        24,
+        MAX_HOURS,
         Math.max(0.0001, (Date.now() - session.startedAt) / 3_600_000),
       );
       const saved = await request("/records", {
@@ -665,7 +835,7 @@ function UserPortal() {
       });
       setRecords((current) => [saved, ...current]);
       setSuccess(
-        `${saved.appliance} stopped · ${saved.energy_kwh.toFixed(3)} kWh recorded for ${saved.section}.`,
+        `${saved.appliance} stopped · ${kwhText(saved.energy_kwh)} kWh recorded for ${saved.section}.`,
       );
       const nextRunning = { ...running };
       delete nextRunning[appliance.id];
@@ -674,6 +844,49 @@ function UserPortal() {
         `wattwise-running:${username}`,
         JSON.stringify(nextRunning),
       );
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitManualUsage(event) {
+    event.preventDefault();
+    if (!manualApplianceRow || manualHoursValue <= 0) return;
+    if (!assignedRoom) {
+      setNotice("Ask an administrator to assign your room first.");
+      return;
+    }
+    setBusy(true);
+    setNotice("");
+    setSuccess("");
+    try {
+      const saved = await request("/records", {
+        method: "POST",
+        body: JSON.stringify({
+          room_id: assignedRoom.id,
+          appliance_id: manualApplianceRow.id,
+          hours: Math.min(MAX_HOURS, manualHoursValue),
+          occupants:
+            occupants === ""
+              ? null
+              : Math.max(0, Math.floor(Number(occupants) || 0)),
+          // Naive local datetime: the API stores it as-is, and building it by
+          // hand avoids toISOString() shifting the day across time zones.
+          started_at: `${manualDate || localDateValue()}T12:00:00`,
+        }),
+      });
+      // The server's numbers are canonical — replace the preview with them.
+      setRecords((current) => [saved, ...current]);
+      setSuccess(
+        `${saved.appliance} · ${saved.hours.toFixed(2)} h on ${manualDate} — ` +
+          `${kwhText(saved.energy_kwh)} kWh, ${money(saved.estimated_cost_php)}.`,
+      );
+      setShowManualForm(false);
+      setManualAppliance("");
+      setManualHours("");
+      setManualDate(localDateValue());
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -768,9 +981,58 @@ function UserPortal() {
     );
   }
 
-  const totalKwh = records.reduce((sum, item) => sum + item.energy_kwh, 0);
-  const totalBill = records.reduce(
-    (sum, item) => sum + item.estimated_cost_php,
+  // Round the logged total once, then derive the bill from that same value so
+  // displayed kWh x rate always equals displayed cost.
+  const totalKwh = Number(
+    records.reduce((sum, item) => sum + item.energy_kwh, 0).toFixed(4),
+  );
+  const totalBill = totalKwh * ratePerKwh;
+  // E = P x t / 1000 for one device; E_total = SUM(P_i x t_i) / 1000 across
+  // devices. Both are derived once here so the table, footer, and formula card
+  // can never disagree about a value.
+  const applianceRows = appliances.map((appliance) => {
+    const session = running[appliance.id];
+    // Clamp to MAX_HOURS so a forgotten timer can never preview more energy
+    // than the API will accept when the session is stopped.
+    const elapsedSeconds = session
+      ? Math.min(
+          MAX_HOURS * 3600,
+          Math.max(0, Math.floor((now - session.startedAt) / 1000)),
+        )
+      : 0;
+    const loggedKwh = records
+      .filter((record) => record.appliance_id === appliance.id)
+      .reduce((total, record) => total + record.energy_kwh, 0);
+    const sessionKwh = session
+      ? (connectedWattsOf(appliance) * elapsedSeconds) / 3_600_000
+      : 0;
+    const loggedSessions = records.filter(
+      (record) => record.appliance_id === appliance.id,
+    ).length;
+    return {
+      appliance,
+      session,
+      elapsedSeconds,
+      loggedKwh,
+      connectedWatts: connectedWattsOf(appliance),
+      // Live figure for this device only while its timer runs.
+      sessionKwh,
+      // Row value: saved history for the appliance plus the live session, so
+      // the footer really is "sum of every row above".
+      estimatedKwh: loggedKwh + sessionKwh,
+      loggedSessions,
+    };
+  });
+  // Grand total across every appliance (history + anything running now).
+  const grandTotalKwh = applianceRows.reduce(
+    (sum, row) => sum + row.estimatedKwh,
+    0,
+  );
+  // Live-within-a-session total: E_total = SUM(P_i x t_i) / 1000 over the
+  // appliances running right now. Idle appliances contribute nothing, so this
+  // never mixes saved history into the live figure.
+  const liveTotalKwh = applianceRows.reduce(
+    (sum, row) => sum + row.sessionKwh,
     0,
   );
 
@@ -781,6 +1043,16 @@ function UserPortal() {
         right={
           <>
             <ThemeToggle darkMode={darkMode} onToggle={toggleTheme} />
+            <button
+              type="button"
+              className={`icon-button${showSettings ? " is-active" : ""}`}
+              onClick={() => setShowSettings((open) => !open)}
+              title="User settings"
+              aria-label="User settings"
+              aria-expanded={showSettings}
+            >
+              <Settings size={17} />
+            </button>
             <span className="account-chip">
               <span className="account-avatar">
                 {username.slice(0, 1).toUpperCase()}
@@ -798,6 +1070,155 @@ function UserPortal() {
           </>
         }
       />
+      {showSettings && (
+        <section className="panel settings-panel">
+          <div className="panel-heading">
+            <div>
+              <span className="eyebrow">USER SETTINGS</span>
+              <h2>Select your appliances</h2>
+            </div>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => setShowSettings(false)}
+              title="Close settings"
+              aria-label="Close settings"
+            >
+              <X size={17} />
+            </button>
+          </div>
+          <p className="settings-help">
+            Choose an appliance type to add it to your classroom list. Each type
+            carries a preset wattage that feeds the E = P × t ÷ 1000 estimate.
+          </p>
+          <form className="settings-add" onSubmit={addPresetAppliance}>
+            <label className="manual-field">
+              <span>Type of appliance</span>
+              <select
+                value={presetChoice}
+                onChange={(event) => setPresetChoice(event.target.value)}
+              >
+                <option value="">Choose an appliance type…</option>
+                {availablePresets.map((preset) => (
+                  <option key={preset.name} value={preset.name}>
+                    {preset.name} · {preset.watts} W
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="submit"
+              className="button button-primary"
+              disabled={busy || !presetRow}
+            >
+              <Plus size={15} /> Add appliance
+            </button>
+          </form>
+          <div className="responsive-table settings-table-wrap">
+            <table className="settings-table">
+              <thead>
+                <tr>
+                  <th>NAME</th>
+                  <th>TYPE OF APPLIANCE</th>
+                  <th className="qty-col">QTY</th>
+                  <th>CONNECTED LOAD</th>
+                  <th aria-label="Remove" />
+                </tr>
+              </thead>
+              <tbody>
+                {appliances.map((appliance) => {
+                  const isKnownPreset = APPLIANCE_PRESETS.some(
+                    (preset) => preset.name === appliance.name,
+                  );
+                  return (
+                    <tr key={appliance.id}>
+                      <td data-label="Name">
+                        <strong>{appliance.name}</strong>
+                        <small>
+                          {kwhPerHourOf(appliance.wattage)} kWh/h each
+                        </small>
+                      </td>
+                      <td data-label="Type of appliance">
+                        <select
+                          value={appliance.name}
+                          disabled={busy}
+                          onChange={(event) =>
+                            updateApplianceType(appliance, event.target.value)
+                          }
+                          aria-label={`Type for ${appliance.name}`}
+                        >
+                          {!isKnownPreset && (
+                            <option value={appliance.name}>
+                              {appliance.name} ·{" "}
+                              {kwhPerHourOf(appliance.wattage)} kWh/h
+                            </option>
+                          )}
+                          {APPLIANCE_PRESETS.map((preset) => (
+                            <option key={preset.name} value={preset.name}>
+                              {preset.name} · {preset.watts} W
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td data-label="Quantity" className="qty-col">
+                        <input
+                          type="number"
+                          min="1"
+                          max="999"
+                          step="1"
+                          className="qty-input"
+                          key={`${appliance.id}-${appliance.quantity || 1}`}
+                          defaultValue={appliance.quantity || 1}
+                          disabled={busy}
+                          aria-label={`Units of ${appliance.name}`}
+                          onBlur={(event) =>
+                            updateApplianceQuantity(appliance, event.target.value)
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") event.currentTarget.blur();
+                          }}
+                        />
+                      </td>
+                      <td data-label="Connected load">
+                        <strong className="connected-load-cell">
+                          {connectedWattsOf(appliance)} W
+                        </strong>
+                        <small>
+                          {kwhPerHourOf(connectedWattsOf(appliance))} kWh/h
+                          {(appliance.quantity || 1) > 1
+                            ? ` · ${appliance.quantity} × ${appliance.wattage} W`
+                            : ""}
+                        </small>
+                      </td>
+                      <td data-label="Remove">
+                        <button
+                          type="button"
+                          className="delete-action"
+                          disabled={busy || Boolean(running[appliance.id])}
+                          title={
+                            running[appliance.id]
+                              ? "Turn this appliance off before removing it"
+                              : `Remove ${appliance.name}`
+                          }
+                          aria-label={`Remove appliance ${appliance.name}`}
+                          onClick={() => removeAppliance(appliance)}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {!appliances.length && (
+              <div className="empty-state compact-empty">
+                No appliances yet — add one from the dropdown above.
+              </div>
+            )}
+          </div>
+        </section>
+      )}
       <section className="workspace-heading">
         <div>
           <div className="eyebrow">
@@ -813,41 +1234,7 @@ function UserPortal() {
         </div>
         <span className="date-stamp">{todayLabel}</span>
       </section>
-      <section className="user-summary">
-        <article className="summary-tile summary-green">
-          <span className="summary-label">
-            <Zap size={15} /> TOTAL LOGGED
-          </span>
-          <strong>
-            {totalKwh.toFixed(2)} <small>kWh</small>
-          </strong>
-          <span className="summary-note">
-            Across {records.length} usage{" "}
-            {records.length === 1 ? "entry" : "entries"}
-          </span>
-        </article>
-        <article className="summary-tile">
-          <span className="summary-label">
-            <Building2 size={15} /> ESTIMATED COST
-          </span>
-          <strong>{money(totalBill)}</strong>
-          <span className="summary-note">Based on submitted usage</span>
-        </article>
-        <article className="summary-tile">
-          <span className="summary-label">
-            <ClipboardList size={15} /> YOUR CLASSROOM SECTION
-          </span>
-          <strong className="section-tile-name">
-            {accountSection ? accountSection.name : "—"}
-          </strong>
-          <span className="summary-note">
-            {accountSection
-              ? "Fixed when your account was created"
-              : "Ask an administrator to set your section"}
-          </span>
-        </article>
-      </section>
-      <section className="user-table-layout">
+      <section className="user-stack">
         <section className="panel appliance-list-panel">
           <div className="panel-heading appliance-list-heading">
             <div>
@@ -856,44 +1243,135 @@ function UserPortal() {
             </div>
             <button
               type="button"
-              className="button button-primary add-appliance-trigger"
-              onClick={() => setShowApplianceForm((open) => !open)}
-              aria-expanded={showApplianceForm}
+              className="button button-outline add-appliance-trigger"
+              onClick={() => setShowSettings(true)}
             >
-              <Plus size={15} /> Add appliance
+              <Settings size={15} /> Manage appliances
             </button>
           </div>
-          {showApplianceForm && (
-            <form className="user-appliance-form" onSubmit={addAppliance}>
-              <label>
-                Appliance name
-                <input
-                  value={applianceName}
-                  onChange={(event) => setApplianceName(event.target.value)}
-                  placeholder="e.g. Document camera"
-                  minLength={2}
-                  maxLength={80}
-                  required
-                />
-              </label>
-              <label>
-                Wattage
-                <input
-                  type="number"
-                  min="1"
-                  max="100000"
-                  step="1"
-                  value={applianceWatts}
-                  onChange={(event) => setApplianceWatts(event.target.value)}
-                  required
-                />
-              </label>
-              <button className="button button-primary" disabled={busy}>
-                {busy ? "Saving..." : "Save appliance"}
-              </button>
-            </form>
-          )}
           <div className="appliance-table-tools">
+            <div className="manual-record-trigger">
+              <button
+                type="button"
+                className={`button button-outline${showManualForm ? " is-active" : ""}`}
+                onClick={() => setShowManualForm((open) => !open)}
+                aria-expanded={showManualForm}
+              >
+                <Clock3 size={15} />{" "}
+                {showManualForm ? "Close custom time" : "Custom time"}
+              </button>
+            </div>
+            {showManualForm && (
+              <div className="manual-record-form">
+                <div className="manual-form-header">
+                  <span className="eyebrow">CUSTOM TIME ENTRY</span>
+                  <p>
+                    Forgot to start your timer? Log hours you missed below.
+                  </p>
+                </div>
+                <div className="manual-form-grid">
+                  <label className="manual-field">
+                    <span>Appliance</span>
+                    <select
+                      value={manualAppliance}
+                      onChange={(event) => setManualAppliance(event.target.value)}
+                    >
+                      <option value="">Select an appliance…</option>
+                      {appliances.map((appliance) => (
+                        <option key={appliance.id} value={appliance.id}>
+                          {appliance.name} · {connectedWattsOf(appliance)} W
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="manual-field">
+                    <span>Hours used (t)</span>
+                    <input
+                      type="number"
+                      min="0.1"
+                      max={MAX_HOURS}
+                      step="0.1"
+                      placeholder="e.g. 2.5"
+                      value={manualHours}
+                      onChange={(event) => setManualHours(event.target.value)}
+                    />
+                  </label>
+                  <label className="manual-field">
+                    <span>Date of use</span>
+                    <input
+                      type="date"
+                      value={manualDate}
+                      max={localDateValue()}
+                      onChange={(event) => setManualDate(event.target.value)}
+                      required
+                    />
+                  </label>
+                </div>
+                <div className="manual-calc-preview" aria-live="polite">
+                  <div className="manual-calc-row">
+                    <span className="manual-calc-label">FORMULA</span>
+                    <code>
+                      E ={" "}
+                      {manualApplianceRow
+                        ? connectedWattsOf(manualApplianceRow)
+                        : "P"}{" "}
+                      W × {manualHoursValue || "t"} h ÷ 1000
+                    </code>
+                  </div>
+                  <div className="manual-calc-row">
+                    <span className="manual-calc-label">LOGGED FOR</span>
+                    <code>
+                      {manualDate
+                        ? new Date(`${manualDate}T00:00:00`).toLocaleDateString(
+                            "en-PH",
+                            {
+                              weekday: "short",
+                              year: "numeric",
+                              month: "short",
+                              day: "numeric",
+                            },
+                          )
+                        : "Pick a date"}
+                    </code>
+                  </div>
+                  <div className="manual-calc-totals">
+                    <div className="manual-calc-item">
+                      <span className="manual-calc-label">ESTIMATED ENERGY</span>
+                      <strong>{kwhText(manualKwh)} kWh</strong>
+                    </div>
+                    <div className="manual-calc-item">
+                      <span className="manual-calc-label">
+                        EST. BILL · {ratePerKwh}/kWh
+                      </span>
+                      <strong>{money(manualBill)}</strong>
+                    </div>
+                  </div>
+                </div>
+                <div className="manual-form-actions">
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => setShowManualForm(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    disabled={busy || !manualValid || !assignedRoom}
+                    onClick={submitManualUsage}
+                  >
+                    {busy ? "Saving…" : "Submit record"}
+                  </button>
+                </div>
+                {!assignedRoom && (
+                  <small className="manual-form-hint">
+                    A room must be assigned to your account before you can log
+                    usage.
+                  </small>
+                )}
+              </div>
+            )}
             <div
               className="section-choice section-fixed"
               title={accountSection?.name}
@@ -924,6 +1402,43 @@ function UserPortal() {
                   : "Ask an administrator to assign a room"}
               </strong>
             </div>
+            <div className="formula-block">
+              <div className="formula-block-title">
+                <Bolt size={14} fill="currentColor" /> POWER CONSUMPTION FORMULAS
+              </div>
+              <div>
+                • Individual device: <strong>E = P × t ÷ 1000</strong> — kWh =
+                watts × hours ÷ 1000
+              </div>
+              <div>
+                • Multiple devices:{" "}
+                <strong>
+                  E<sub>total</sub> = Σ (P<sub>i</sub> × t<sub>i</sub>) ÷ 1000
+                </strong>{" "}
+                — sum each device's own kWh
+              </div>
+              <div className="formula-load">
+                <span className="formula-load-label">CONNECTED LOAD</span>
+                <strong key={connectedWatts} data-testid="connected-load">
+                  {kwhText(connectedWatts)} W
+                </strong>
+                <span className="formula-load-note">
+                  = {kwhPerHourOf(connectedWatts)} kWh/h · Σ (unit W × units)
+                  across {appliances.length}{" "}
+                  {appliances.length === 1 ? "appliance" : "appliances"}
+                </span>
+              </div>
+              <div className="formula-total">
+                <span>
+                  Running now (
+                  {applianceRows.filter((row) => row.session).length} of{" "}
+                  {appliances.length} appliances):
+                </span>
+                <output key={liveTotalKwh.toFixed(4)}>
+                  {liveTotalKwh.toFixed(4)} kWh
+                </output>
+              </div>
+            </div>
             <span className="formula">LIVE ESTIMATE · W × HOURS ÷ 1,000</span>
           </div>
           <Notice>{notice}</Notice>
@@ -938,21 +1453,15 @@ function UserPortal() {
                 </tr>
               </thead>
               <tbody>
-                {appliances.map((appliance) => {
-                  const session = running[appliance.id];
-                  const elapsedSeconds = session
-                    ? Math.floor((now - session.startedAt) / 1000)
-                    : 0;
-                  const loggedKwh = records
-                    .filter((record) => record.appliance_id === appliance.id)
-                    .reduce((total, record) => total + record.energy_kwh, 0);
-                  const estimatedKwh = session
-                    ? (appliance.wattage * elapsedSeconds) / 3_600_000
-                    : loggedKwh;
-                  const loggedSessions = records.filter(
-                    (record) => record.appliance_id === appliance.id,
-                  ).length;
-                  return (
+                {applianceRows.map(
+                  ({
+                    appliance,
+                    session,
+                    elapsedSeconds,
+                    estimatedKwh,
+                    sessionKwh,
+                    loggedSessions,
+                  }) => (
                     <tr key={appliance.id}>
                       <td data-label="Appliance">
                         <span className="appliance-name-cell">
@@ -963,16 +1472,23 @@ function UserPortal() {
                           </span>
                           <span>
                             <strong>{appliance.name}</strong>
-                            <small>{appliance.wattage} W</small>
+                            <small>
+                              {connectedWattsOf(appliance)} W
+                              {(appliance.quantity || 1) > 1
+                                ? ` (${appliance.quantity} × ${appliance.wattage} W)`
+                                : ""}
+                            </small>
                           </span>
                         </span>
                       </td>
                       <td data-label="Estimated kwh">
                         <span className="appliance-estimate-cell">
-                          <strong>{estimatedKwh.toFixed(4)} kWh</strong>
+                          <strong key={estimatedKwh.toFixed(4)}>
+                            {estimatedKwh.toFixed(4)} kWh
+                          </strong>
                           <small>
                             {session
-                              ? `${String(Math.floor(elapsedSeconds / 3600)).padStart(2, "0")}:${String(Math.floor((elapsedSeconds % 3600) / 60)).padStart(2, "0")}:${String(elapsedSeconds % 60).padStart(2, "0")} elapsed`
+                              ? `${String(Math.floor(elapsedSeconds / 3600)).padStart(2, "0")}:${String(Math.floor((elapsedSeconds % 3600) / 60)).padStart(2, "0")}:${String(elapsedSeconds % 60).padStart(2, "0")} elapsed · +${sessionKwh.toFixed(4)} kWh now`
                               : loggedSessions
                                 ? `${loggedSessions} completed session${loggedSessions === 1 ? "" : "s"}`
                                 : "Not running"}
@@ -996,22 +1512,36 @@ function UserPortal() {
                           >
                             <Power size={15} /> {session ? "OFF" : "ON"}
                           </button>
-                          <button
-                            type="button"
-                            className="delete-action"
-                            aria-label={`Remove appliance ${appliance.name}`}
-                            title={`Remove ${appliance.name}`}
-                            disabled={busy || Boolean(session)}
-                            onClick={() => removeAppliance(appliance)}
-                          >
-                            <Trash2 size={15} />
-                          </button>
                         </span>
                       </td>
                     </tr>
-                  );
-                })}
+                  ),
+                )}
               </tbody>
+              {applianceRows.length > 0 && (
+                <tfoot>
+                  <tr>
+                    <td data-label="Total">
+                      <span className="appliance-name-cell">
+                        <span>
+                          <strong>
+                            E<sub>total</sub> = Σ (P<sub>i</sub> × t
+                            <sub>i</sub>) ÷ 1000
+                          </strong>
+                          <small>Sum of every row above</small>
+                        </span>
+                      </span>
+                    </td>
+                    <td data-label="Total kwh">
+                      <span className="appliance-estimate-cell">
+                        <strong>{grandTotalKwh.toFixed(4)} kWh</strong>
+                        <small>Saved history + running</small>
+                      </span>
+                    </td>
+                    <td />
+                  </tr>
+                </tfoot>
+              )}
             </table>
             {!appliances.length && (
               <div className="empty-state">
@@ -1047,13 +1577,18 @@ function UserPortal() {
                     </small>
                   </span>
                   <span className="record-values">
-                    <strong>{record.energy_kwh.toFixed(2)} kWh</strong>
+                    <strong>{kwhText(record.energy_kwh)} kWh</strong>
                     <small>
-                      {new Date(record.created_at).toLocaleDateString("en-PH", {
+                      {/* The usage date the teacher logged, not the submit time. */}
+                      {new Date(
+                        record.started_at || record.created_at,
+                      ).toLocaleDateString("en-PH", {
                         month: "short",
                         day: "numeric",
                       })}{" "}
-                      {new Date(record.created_at).toLocaleTimeString("en-PH", {
+                      {new Date(
+                        record.started_at || record.created_at,
+                      ).toLocaleTimeString("en-PH", {
                         hour: "numeric",
                         minute: "2-digit",
                       })}
@@ -1071,6 +1606,29 @@ function UserPortal() {
               <span>Your submitted usage records will appear here.</span>
             </div>
           )}
+        </section>
+        <section className="user-summary">
+          <article className="summary-tile summary-green">
+            <span className="summary-label">
+              <Zap size={15} /> TOTAL LOGGED
+            </span>
+            <strong key={totalKwh}>
+              {kwhText(totalKwh)} <small>kWh</small>
+            </strong>
+            <span className="summary-note">
+              Σ (P × t) ÷ 1000 over {records.length} usage{" "}
+              {records.length === 1 ? "entry" : "entries"}
+            </span>
+          </article>
+          <article className="summary-tile">
+            <span className="summary-label">
+              <Building2 size={15} /> ESTIMATED COST
+            </span>
+            <strong>{money(totalBill)}</strong>
+            <span className="summary-note">
+              {kwhText(totalKwh)} kWh × {money(ratePerKwh)} per kWh
+            </span>
+          </article>
         </section>
       </section>
       <footer className="page-footer">
@@ -1114,16 +1672,38 @@ function AdminPortal() {
   const [credentialsMessage, setCredentialsMessage] = useState("");
   const [reports, setReports] = useState(null);
   const [reportGroup, setReportGroup] = useState("day");
+  // Report criteria: building / room / section / appliance narrow the report,
+  // and the search box answers questions over whatever the report contains.
+  const [reportBuilding, setReportBuilding] = useState("");
+  const [reportRoomId, setReportRoomId] = useState("");
+  const [reportSectionId, setReportSectionId] = useState("");
+  const [reportApplianceId, setReportApplianceId] = useState("");
+  const [reportQuery, setReportQuery] = useState("");
+  const [reportAnswer, setReportAnswer] = useState(null);
+  // Workspace rail auto-hides; pinning keeps it open.
+  const [railOpen, setRailOpen] = useState(false);
+  const [railPinned, setRailPinned] = useState(false);
 
   async function loadDashboard(selectedMonth = month) {
     const data = await request(`/admin/dashboard?month=${selectedMonth}`);
     setDashboard(data);
   }
 
-  async function loadReports(group = reportGroup, selectedMonth = month) {
-    const data = await request(
-      `/admin/reports?month=${selectedMonth}&group=${group}`,
-    );
+  async function loadReports(overrides = {}) {
+    const params = new URLSearchParams({
+      month: overrides.month ?? month,
+      group: overrides.group ?? reportGroup,
+    });
+    const filters = {
+      building: overrides.building ?? reportBuilding,
+      room_id: overrides.roomId ?? reportRoomId,
+      section_id: overrides.sectionId ?? reportSectionId,
+      appliance_id: overrides.applianceId ?? reportApplianceId,
+    };
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value) params.set(key, String(value));
+    });
+    const data = await request(`/admin/reports?${params.toString()}`);
     setReports(data);
   }
 
@@ -1200,11 +1780,6 @@ function AdminPortal() {
 
   const visibleRooms = flatRooms.filter(roomMatches);
 
-  const busiestRooms = flatRooms
-    .filter((room) => room.submission_count > 0)
-    .sort((a, b) => b.average_kwh - a.average_kwh)
-    .slice(0, 5);
-
   async function saveRoomDetails(event) {
     event.preventDefault();
     setNotice("");
@@ -1247,7 +1822,10 @@ function AdminPortal() {
     ? () => {
         loadDashboard(monthRef.current).catch(() => {});
         if (reportsRef.current) {
-          loadReports(reportGroupRef.current, monthRef.current).catch(() => {});
+          loadReports({
+            group: reportGroupRef.current,
+            month: monthRef.current,
+          }).catch(() => {});
         }
       }
     : null,
@@ -1529,15 +2107,126 @@ function AdminPortal() {
   const pendingUsers = (dashboard?.users || []).filter(
     (user) => user.status === "pending",
   );
+  // Consolidated account posture for the Overview tab.
+  const allAccounts = dashboard?.users || [];
+  const activeAccounts = allAccounts.filter(
+    (user) => user.status === "active",
+  ).length;
+  const inactiveAccounts = allAccounts.length - activeAccounts;
+
+  // Rule-based report search: matches keywords against the aggregates the
+  // reports endpoint already returns, so answers stay consistent with the
+  // table and never invent numbers.
+  function answerReportQuery(rawQuery) {
+    const query = rawQuery.trim().toLowerCase();
+    if (!query) return null;
+    const rooms = reports?.room_ranking || [];
+    const applianceRank = reports?.appliance_ranking || [];
+    const sections = dashboard?.sections || [];
+    const patterns = reports?.patterns;
+    const wantsMost = /(highest|most|top|busiest|max|largest|biggest)/.test(query);
+    const rankingNote = (rows, pick) =>
+      rows.slice(1, 4).map((row) => `${pick(row)} (${kwhText(row.kwh)} kWh)`);
+
+    if (wantsMost && /(room|classroom)/.test(query)) {
+      const top = rooms[0];
+      return top
+        ? {
+            title: top.room,
+            value: `${kwhText(top.kwh)} kWh`,
+            detail: "Highest-consuming room in this report.",
+            also: rankingNote(rooms, (row) => row.room),
+          }
+        : { title: "No room usage", detail: "No rooms have records for this criteria." };
+    }
+    if (wantsMost && /(appliance|device|equipment)/.test(query)) {
+      const top = applianceRank[0];
+      return top
+        ? {
+            title: top.name,
+            value: `${kwhText(top.kwh)} kWh`,
+            detail: "Appliance drawing the most energy in this report.",
+            also: rankingNote(applianceRank, (row) => row.name),
+          }
+        : { title: "No appliance usage", detail: "No appliances have records for this criteria." };
+    }
+    if (wantsMost && /section/.test(query)) {
+      const top = sections[0];
+      return top
+        ? {
+            title: top.name,
+            value: `${kwhText(top.kwh)} kWh`,
+            detail: "Highest-consuming section this month.",
+            also: sections
+              .slice(1, 4)
+              .map((row) => `${row.name} (${kwhText(row.kwh)} kWh)`),
+          }
+        : { title: "No section usage", detail: "No sections have records this month." };
+    }
+    if (/(peak|busiest).*(hour|time)|what.*hour/.test(query)) {
+      const peak = patterns?.peak_hour;
+      return peak
+        ? { title: peak.hour, value: `${kwhText(peak.kwh)} kWh`, detail: "Busiest start hour." }
+        : { title: "No usage", detail: "Nothing recorded for this criteria." };
+    }
+    if (/(weekday|what day|which day)/.test(query)) {
+      const peak = patterns?.peak_weekday;
+      return peak
+        ? { title: peak.day, value: `${kwhText(peak.kwh)} kWh`, detail: "Busiest weekday." }
+        : { title: "No usage", detail: "Nothing recorded for this criteria." };
+    }
+    if (/(bill|cost|peso|php|price|spend)/.test(query)) {
+      return {
+        title: money(reports?.total_bill ?? 0),
+        detail: `Estimated cost for ${reports?.session_count ?? 0} sessions at ${money(dashboard?.rate_php_per_kwh)}/kWh.`,
+      };
+    }
+    if (/(total|how much|kwh|energy|consumption|sum)/.test(query)) {
+      return {
+        title: `${kwhText(reports?.total_kwh ?? 0)} kWh`,
+        detail: `Total for ${reports?.session_count ?? 0} sessions under the current criteria.`,
+      };
+    }
+    if (/(account|user|teacher)/.test(query)) {
+      return {
+        title: `${allAccounts.length} accounts`,
+        detail: `${activeAccounts} active, ${inactiveAccounts} inactive. ${pendingUsers.length} awaiting approval.`,
+      };
+    }
+    if (/(room|classroom)s?.*(count|how many)/.test(query)) {
+      return {
+        title: `${flatRooms.length} rooms`,
+        detail: `${flatRooms.filter((room) => room.submission_count > 0).length} have usage in the last 30 days.`,
+      };
+    }
+    if (/(occupant|attendance|students)/.test(query)) {
+      return patterns?.avg_occupants != null
+        ? {
+            title: `${patterns.avg_occupants} avg occupants`,
+            detail: "Average per recorded session.",
+          }
+        : { title: "No occupant data", detail: "Occupants were not filled in for these sessions." };
+    }
+    return {
+      title: "No match",
+      detail:
+        "Try: highest consumption room · top appliance · peak hour · total kWh · estimated bill · how many accounts · rooms with usage",
+    };
+  }
+
+  function askReportQuery(event) {
+    event.preventDefault();
+    setReportAnswer(answerReportQuery(reportQuery));
+  }
 
   const tabs = [
+    // Merged first, per the "user management & facilities at the top left" brief.
+    ["facilities", "Users & facilities", Building2],
     ["overview", "Overview", Activity],
     ["reports", "Reports", Zap],
     ["rooms", "Buildings & rooms", DoorOpen],
-    ["records", "Submissions", ClipboardList],
-    ["users", "User activity", Users],
-    ["catalog", "Manage catalog", Building2],
   ];
+  const railExpanded = railOpen || railPinned;
 
   return (
     <main className="admin-page">
@@ -1555,13 +2244,30 @@ function AdminPortal() {
           </>
         }
       />
-      <div className="admin-layout">
-        <aside className="admin-rail">
+      <div className={`admin-layout${railExpanded ? " rail-wide" : ""}`}>
+        <aside
+          className={`admin-rail${railExpanded ? " is-open" : ""}`}
+          onMouseEnter={() => setRailOpen(true)}
+          onMouseLeave={() => {
+            if (!railPinned) setRailOpen(false);
+          }}
+          onFocus={() => setRailOpen(true)}
+          onBlur={(event) => {
+            if (
+              !railPinned &&
+              !event.currentTarget.contains(event.relatedTarget)
+            ) {
+              setRailOpen(false);
+            }
+          }}
+        >
           <div className="rail-label">WORKSPACE</div>
           {tabs.map(([key, label, Icon]) => (
             <button
               key={key}
               className={`rail-link${tab === key ? " active" : ""}`}
+              title={label}
+              aria-label={label}
               onClick={() => {
                 setTab(key);
                 if (key === "reports") {
@@ -1570,13 +2276,28 @@ function AdminPortal() {
               }}
             >
               <Icon size={17} />
-              {label}
-              {key === "users" && pendingUsers.length > 0 && (
+              <span className="rail-text">{label}</span>
+              {key === "facilities" && pendingUsers.length > 0 && (
                 <span className="rail-badge">{pendingUsers.length}</span>
               )}
               {tab === key && <span className="rail-active-mark" />}
             </button>
           ))}
+          <button
+            type="button"
+            className={`rail-pin${railPinned ? " is-pinned" : ""}`}
+            onClick={() => {
+              setRailPinned((pinned) => !pinned);
+              setRailOpen(true);
+            }}
+            title={railPinned ? "Unpin the rail" : "Keep the rail open"}
+            aria-pressed={railPinned}
+          >
+            <ChevronDown size={15} />
+            <span className="rail-text">
+              {railPinned ? "Unpin rail" : "Pin rail open"}
+            </span>
+          </button>
           <div className="rail-bottom">
             <span className="rail-admin-icon">
               <ShieldCheck size={16} />
@@ -1614,9 +2335,10 @@ function AdminPortal() {
                     setNotice(error.message),
                   );
                   if (tab === "reports") {
-                    loadReports(reportGroup, event.target.value).catch(
-                      (error) => setNotice(error.message),
-                    );
+                    loadReports({
+                      group: reportGroup,
+                      month: event.target.value,
+                    }).catch((error) => setNotice(error.message));
                   }
                 }}
               />
@@ -1635,8 +2357,8 @@ function AdminPortal() {
                       <span>
                         <Zap size={15} /> TOTAL CONSUMPTION
                       </span>
-                      <strong>
-                        {dashboard.total_kwh.toFixed(2)} <small>kWh</small>
+                      <strong key={dashboard.total_kwh}>
+                        {kwhText(dashboard.total_kwh)} <small>kWh</small>
                       </strong>
                       <small className="metric-foot">
                         For{" "}
@@ -1656,21 +2378,7 @@ function AdminPortal() {
                       <strong>{money(dashboard.estimated_bill_php)}</strong>
                       <small className="metric-foot">
                         At {money(dashboard.rate_php_per_kwh)} / kWh
-                      </small>
-                    </article>
-                    <article>
-                      <span>
-                        <span className="metric-icon blue">
-                          <ClipboardList size={15} />
-                        </span>
-                        USAGE ENTRIES
-                      </span>
-                      <strong>
-                        {dashboard.record_count.toString().padStart(2, "0")}
-                      </strong>
-                      <small className="metric-foot">
-                        Submitted this month
-                      </small>
+                      </small>s
                     </article>
                     <article>
                       <span>
@@ -1679,13 +2387,81 @@ function AdminPortal() {
                         </span>
                         ACTIVE ACCOUNTS
                       </span>
-                      <strong>
-                        {dashboard.user_count.toString().padStart(2, "0")}
+                      <strong key={activeAccounts}>
+                        {activeAccounts.toString().padStart(2, "0")}
                       </strong>
                       <small className="metric-foot">
-                        {dashboard.section_count} sections configured
+                        Approved and able to sign in
                       </small>
                     </article>
+                    <article className={inactiveAccounts ? "metric-alert" : ""}>
+                      <span>
+                        <span className="metric-icon blue">
+                          <ClipboardList size={15} />
+                        </span>
+                        INACTIVE ACCOUNTS
+                      </span>
+                      <strong key={inactiveAccounts}>
+                        {inactiveAccounts.toString().padStart(2, "0")}
+                      </strong>
+                      <small className="metric-foot">
+                        {pendingUsers.length
+                          ? `${pendingUsers.length} awaiting approval`
+                          : "Nothing awaiting approval"}
+                      </small>
+                    </article>
+                  </section>
+                  <section className="panel consolidated-panel">
+                    <div className="panel-heading">
+                      <div>
+                        <span className="eyebrow">CONSOLIDATED</span>
+                        <h2>Campus summary</h2>
+                      </div>
+                      <span className="count-pill">
+                        {new Date(`${month}-01T00:00:00`).toLocaleDateString(
+                          "en-PH",
+                          { month: "short", year: "numeric" },
+                        )}
+                      </span>
+                    </div>
+                    <div className="consolidated-grid">
+                      <div className="consolidated-item is-total">
+                        <span>TOTAL ACCOUNTS</span>
+                        <strong>{allAccounts.length}</strong>
+                      </div>
+                      <div className="consolidated-item">
+                        <span>Active</span>
+                        <strong>{activeAccounts}</strong>
+                      </div>
+                      <div className="consolidated-item">
+                        <span>Inactive</span>
+                        <strong>{inactiveAccounts}</strong>
+                      </div>
+                      <div className="consolidated-item">
+                        <span>Classrooms</span>
+                        <strong>{flatRooms.length}</strong>
+                      </div>
+                      <div className="consolidated-item">
+                        <span>Sections</span>
+                        <strong>{dashboard.section_count}</strong>
+                      </div>
+                      <div className="consolidated-item">
+                        <span>Appliances</span>
+                        <strong>{dashboard.appliances.length}</strong>
+                      </div>
+                      <div className="consolidated-item">
+                        <span>Usage entries</span>
+                        <strong>{dashboard.record_count}</strong>
+                      </div>
+                      <div className="consolidated-item">
+                        <span>Energy this month</span>
+                        <strong>{kwhText(dashboard.total_kwh)} kWh</strong>
+                      </div>
+                      <div className="consolidated-item">
+                        <span>Estimated bill</span>
+                        <strong>{money(dashboard.estimated_bill_php)}</strong>
+                      </div>
+                    </div>
                   </section>
                   <section className="admin-analysis-grid">
                     <article className="panel trend-panel">
@@ -1745,7 +2521,7 @@ function AdminPortal() {
                             <Tooltip
                               formatter={(value, name) => [
                                 name === "Energy"
-                                  ? `${Number(value).toFixed(2)} kWh`
+                                  ? `${kwhText(value)} kWh`
                                   : money(value),
                                 name,
                               ]}
@@ -1817,7 +2593,7 @@ function AdminPortal() {
                                   </i>
                                 </span>
                                 <span className="rank-value">
-                                  <strong>{section.kwh.toFixed(2)}</strong>
+                                  <strong>{kwhText(section.kwh)}</strong>
                                   <small>kWh</small>
                                 </span>
                               </div>
@@ -1841,53 +2617,186 @@ function AdminPortal() {
                       )}
                     </article>
                   </section>
-                  <section className="panel table-panel">
-                    <div className="panel-heading">
-                      <div>
-                        <span className="eyebrow">LATEST ACTIVITY</span>
-                        <h2>Recent submissions</h2>
-                      </div>
-                      <button
-                        className="text-action"
-                        onClick={() => setTab("records")}
-                      >
-                        All submissions <ArrowRight size={14} />
-                      </button>
-                    </div>
-                    <RecordsTable records={dashboard.records.slice(0, 5)} />
-                  </section>
-                  {dashboard.alerts?.length ? (
-                    <section className="panel table-panel">
-                      <div className="panel-heading">
-                        <div>
-                          <span className="eyebrow">USAGE ALERTS</span>
-                          <h2>Unusually long sessions</h2>
-                        </div>
-                        <span className="count-pill">
-                          {dashboard.alerts.length} flagged
-                        </span>
-                      </div>
-                      <RecordsTable records={dashboard.alerts} />
-                      <p className="alert-legend">
-                        Flagged sessions ran 8 hours or more, or over twice the
-                        appliance average.
-                      </p>
-                    </section>
-                  ) : null}
                 </>
               )}
               {tab === "reports" && (
-                <ReportsPanel
-                  reports={reports}
-                  group={reportGroup}
-                  month={month}
-                  onGroupChange={(nextGroup) => {
-                    setReportGroup(nextGroup);
-                    loadReports(nextGroup).catch((error) =>
-                      setNotice(error.message),
-                    );
-                  }}
-                />
+                <>
+                  <section className="panel report-controls">
+                    <div className="panel-heading">
+                      <div>
+                        <span className="eyebrow">REPORT CRITERIA</span>
+                        <h2>Generate a report</h2>
+                      </div>
+                      <button
+                        type="button"
+                        className="button button-primary"
+                        disabled={busy}
+                        onClick={() =>
+                          loadReports().catch((error) =>
+                            setNotice(error.message),
+                          )
+                        }
+                      >
+                        <Activity size={15} /> Generate
+                      </button>
+                    </div>
+                    <div className="report-criteria-grid">
+                      <label className="manual-field">
+                        <span>Building</span>
+                        <select
+                          value={reportBuilding}
+                          onChange={(event) => {
+                            setReportBuilding(event.target.value);
+                            setReportRoomId("");
+                          }}
+                        >
+                          <option value="">All buildings</option>
+                          {roomsData?.buildings.map((building) => (
+                            <option key={building.code} value={building.code}>
+                              {building.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="manual-field">
+                        <span>Room</span>
+                        <select
+                          value={reportRoomId}
+                          onChange={(event) =>
+                            setReportRoomId(event.target.value)
+                          }
+                        >
+                          <option value="">All rooms</option>
+                          {roomsData?.buildings
+                            .filter(
+                              (building) =>
+                                !reportBuilding ||
+                                building.code === reportBuilding,
+                            )
+                            .map((building) => (
+                              <optgroup
+                                key={building.code}
+                                label={building.name}
+                              >
+                                {building.rooms.map((room) => (
+                                  <option key={room.id} value={room.id}>
+                                    {room.room_name ||
+                                      `Room ${room.room_number}`}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ))}
+                        </select>
+                      </label>
+                      <label className="manual-field">
+                        <span>Section</span>
+                        <select
+                          value={reportSectionId}
+                          onChange={(event) =>
+                            setReportSectionId(event.target.value)
+                          }
+                        >
+                          <option value="">All sections</option>
+                          {groupSectionsByGrade(
+                            dashboard.sections_catalog || [],
+                          ).map((group) => (
+                            <optgroup key={group.label} label={group.label}>
+                              {group.items.map((section) => (
+                                <option key={section.id} value={section.id}>
+                                  {section.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="manual-field">
+                        <span>Appliance</span>
+                        <select
+                          value={reportApplianceId}
+                          onChange={(event) =>
+                            setReportApplianceId(event.target.value)
+                          }
+                        >
+                          <option value="">All appliances</option>
+                          {(dashboard.appliances || []).map((appliance) => (
+                            <option key={appliance.id} value={appliance.id}>
+                              {appliance.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <form className="report-search" onSubmit={askReportQuery}>
+                      <Search size={16} aria-hidden="true" />
+                      <input
+                        type="search"
+                        value={reportQuery}
+                        onChange={(event) =>
+                          setReportQuery(event.target.value)
+                        }
+                        placeholder='Ask the report — e.g. "what room has the highest consumption?"'
+                        aria-label="Search the report"
+                      />
+                      <button className="button button-primary" disabled={busy}>
+                        Ask
+                      </button>
+                    </form>
+                    <div className="report-suggestions">
+                      {[
+                        "which room has the highest consumption?",
+                        "top appliance",
+                        "peak hour",
+                        "total kWh",
+                        "estimated bill",
+                        "how many accounts",
+                      ].map((suggestion) => (
+                        <button
+                          key={suggestion}
+                          type="button"
+                          className="suggestion-chip"
+                          onClick={() => {
+                            setReportQuery(suggestion);
+                            setReportAnswer(answerReportQuery(suggestion));
+                          }}
+                        >
+                          {suggestion}
+                        </button>
+                      ))}
+                    </div>
+                    {reportAnswer && (
+                      <div className="report-answer" role="status">
+                        <span className="report-answer-icon">
+                          <Search size={16} />
+                        </span>
+                        <div>
+                          <span className="report-answer-label">
+                            {reportQuery ? `“${reportQuery}”` : "Answer"}
+                          </span>
+                          <strong>{reportAnswer.title}</strong>
+                          <p>{reportAnswer.detail}</p>
+                          {reportAnswer.also?.length ? (
+                            <p className="report-answer-also">
+                              Next: {reportAnswer.also.join(" · ")}
+                            </p>
+                          ) : null}
+                        </div>
+                      </div>
+                    )}
+                  </section>
+                  <ReportsPanel
+                    reports={reports}
+                    group={reportGroup}
+                    month={month}
+                    criteria={reports?.criteria}
+                    onGroupChange={(nextGroup) => {
+                      setReportGroup(nextGroup);
+                      loadReports({ group: nextGroup }).catch((error) =>
+                        setNotice(error.message),
+                      );
+                    }}
+                  />
+                </>
               )}
               {tab === "rooms" && (
                 <>
@@ -1941,66 +2850,6 @@ function AdminPortal() {
                           {visibleRooms.length} of {flatRooms.length} rooms
                         </span>
                       </div>
-                      <section className="panel table-panel room-rank-panel">
-                        <div className="panel-heading">
-                          <div>
-                            <span className="eyebrow">LAST 30 DAYS</span>
-                            <h2>Busiest rooms</h2>
-                          </div>
-                          <ArrowDownRight
-                            className="ranking-icon"
-                            size={18}
-                            aria-hidden="true"
-                          />
-                        </div>
-                        {busiestRooms.length ? (
-                          <div className="section-rank-list">
-                            {busiestRooms.map((room, index) => (
-                              <button
-                                type="button"
-                                className="section-rank room-rank"
-                                key={room.id}
-                                onClick={() => chooseRoom(room)}
-                              >
-                                <span className="rank-number">
-                                  {String(index + 1).padStart(2, "0")}
-                                </span>
-                                <span className="rank-name">
-                                  <strong>{room.display_name}</strong>
-                                  <i>
-                                    <b
-                                      style={{
-                                        width: `${Math.max(
-                                          5,
-                                          (room.average_kwh /
-                                            busiestRooms[0].average_kwh) *
-                                            100,
-                                        )}%`,
-                                      }}
-                                    />
-                                  </i>
-                                  <small>
-                                    {room.building_name} · floor {room.floor}
-                                  </small>
-                                </span>
-                                <span className="rank-value">
-                                  <strong>{roomKwh(room.average_kwh)}</strong>
-                                  <small>
-                                    kWh · {room.submission_count}{" "}
-                                    {room.submission_count === 1
-                                      ? "submission"
-                                      : "submissions"}
-                                  </small>
-                                </span>
-                              </button>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="empty-state compact-empty">
-                            No room usage recorded in the last 30 days yet.
-                          </div>
-                        )}
-                      </section>
                       {visibleRooms.length === 0 ? (
                         <div className="panel room-empty-panel">
                           <div className="empty-state compact-empty">
@@ -2295,31 +3144,18 @@ function AdminPortal() {
                   )}
                 </>
               )}
-              {tab === "records" && (
-                <section className="panel table-panel">
-                  <div className="panel-heading">
-                    <div>
-                      <span className="eyebrow">{month}</span>
-                      <h2>Energy submissions</h2>
+              {tab === "facilities" && (
+                <>
+                  <section className="panel user-monitor-panel">
+                    <div className="panel-heading">
+                      <div>
+                        <span className="eyebrow">USER MANAGEMENT</span>
+                        <h2>User accounts</h2>
+                      </div>
+                      <span className="count-pill">
+                        {dashboard.users.length} accounts
+                      </span>
                     </div>
-                    <span className="count-pill">
-                      {dashboard.records.length} records
-                    </span>
-                  </div>
-                  <RecordsTable records={dashboard.records} />
-                </section>
-              )}
-              {tab === "users" && (
-                <section className="panel user-monitor-panel">
-                  <div className="panel-heading">
-                    <div>
-                      <span className="eyebrow">ACCOUNT MONITORING</span>
-                      <h2>User activity</h2>
-                    </div>
-                    <span className="count-pill">
-                      {dashboard.users.length} accounts
-                    </span>
-                  </div>
                   {pendingUsers.length > 0 && (
                     <div className="approval-block">
                       <div className="approval-heading">
@@ -2480,10 +3316,22 @@ function AdminPortal() {
                                 aria-label={`Set section for ${user.username}`}
                               >
                                 <option value="">No section</option>
-                                {dashboard.sections_catalog.map((section) => (
-                                  <option key={section.id} value={section.id}>
-                                    {section.name}
-                                  </option>
+                                {groupSectionsByGrade(
+                                  dashboard.sections_catalog,
+                                ).map((group) => (
+                                  <optgroup
+                                    key={group.label}
+                                    label={group.label}
+                                  >
+                                    {group.items.map((section) => (
+                                      <option
+                                        key={section.id}
+                                        value={section.id}
+                                      >
+                                        {section.name}
+                                      </option>
+                                    ))}
+                                  </optgroup>
                                 ))}
                               </select>
                             </td>
@@ -2553,15 +3401,13 @@ function AdminPortal() {
                   {!dashboard.users.length && (
                     <div className="empty-state">No user accounts yet.</div>
                   )}
-                </section>
-              )}
-              {tab === "catalog" && (
-                <section className="catalog-grid">
-                  <div className="panel catalog-panel">
-                    <div className="panel-heading">
-                      <div>
-                        <span className="eyebrow">CLASSROOMS</span>
-                        <h2>Sections</h2>
+                  </section>
+                  <section className="catalog-grid">
+                    <div className="panel catalog-panel">
+                      <div className="panel-heading">
+                        <div>
+                          <span className="eyebrow">CLASSROOMS</span>
+                          <h2>Sections</h2>
                       </div>
                       <span className="count-pill">
                         {dashboard.sections_catalog.length}
@@ -2601,23 +3447,32 @@ function AdminPortal() {
                       </button>
                     </form>
                     <div className="catalog-list">
-                      {dashboard.sections_catalog.map((section) => (
-                        <div className="catalog-row" key={section.id}>
-                          <span className="catalog-row-icon">
-                            <DoorOpen size={16} />
-                          </span>
-                          <strong>{section.name}</strong>
-                          <button
-                            type="button"
-                            className="delete-action"
-                            title={`Remove ${section.name}`}
-                            aria-label={`Remove section ${section.name}`}
-                            onClick={() => removeSection(section)}
-                          >
-                            <Trash2 size={15} />
-                          </button>
-                        </div>
-                      ))}
+                      {groupSectionsByGrade(dashboard.sections_catalog).map(
+                        (group) => (
+                          <div className="catalog-group" key={group.label}>
+                            <span className="catalog-group-label">
+                              {group.label}
+                            </span>
+                            {group.items.map((section) => (
+                              <div className="catalog-row" key={section.id}>
+                                <span className="catalog-row-icon">
+                                  <DoorOpen size={16} />
+                                </span>
+                                <strong>{section.name}</strong>
+                                <button
+                                  type="button"
+                                  className="delete-action"
+                                  title={`Remove ${section.name}`}
+                                  aria-label={`Remove section ${section.name}`}
+                                  onClick={() => removeSection(section)}
+                                >
+                                  <Trash2 size={15} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ),
+                      )}
                     </div>
                   </div>
                   <div className="panel catalog-panel">
@@ -2701,6 +3556,7 @@ function AdminPortal() {
                     </div>
                   </div>
                 </section>
+                </>
               )}
             </div>
           )}
@@ -2717,35 +3573,41 @@ function AdminPortal() {
   );
 }
 
-function ReportsPanel({ reports, group, month, onGroupChange }) {
+function ReportsPanel({ reports, group, month, criteria, onGroupChange }) {
   const patterns = reports?.patterns;
+  const activeCriteria = [];
+  if (criteria?.building) activeCriteria.push(`Building ${criteria.building}`);
+  if (criteria?.room_id) activeCriteria.push(`Room #${criteria.room_id}`);
+  if (criteria?.section_id) activeCriteria.push(`Section #${criteria.section_id}`);
+  if (criteria?.appliance_id)
+    activeCriteria.push(`Appliance #${criteria.appliance_id}`);
   const cards = [
     {
       label: "PEAK WEEKDAY",
       value: patterns?.peak_weekday?.day || "—",
       note: patterns?.peak_weekday
-        ? `${patterns.peak_weekday.kwh.toFixed(2)} kWh`
+        ? `${kwhText(patterns.peak_weekday.kwh)} kWh`
         : "No usage this month",
     },
     {
       label: "PEAK START HOUR",
       value: patterns?.peak_hour?.hour || "—",
       note: patterns?.peak_hour
-        ? `${patterns.peak_hour.kwh.toFixed(2)} kWh started`
+        ? `${kwhText(patterns.peak_hour.kwh)} kWh started`
         : "No usage this month",
     },
     {
       label: "TOP APPLIANCE",
       value: patterns?.top_appliance?.name || "—",
       note: patterns?.top_appliance
-        ? `${patterns.top_appliance.kwh.toFixed(2)} kWh`
+        ? `${kwhText(patterns.top_appliance.kwh)} kWh`
         : "No usage this month",
     },
     {
       label: "BUSIEST ROOM",
       value: patterns?.busiest_room?.room || "—",
       note: patterns?.busiest_room
-        ? `${patterns.busiest_room.kwh.toFixed(2)} kWh`
+        ? `${kwhText(patterns.busiest_room.kwh)} kWh`
         : "No usage this month",
     },
   ];
@@ -2765,6 +3627,14 @@ function ReportsPanel({ reports, group, month, onGroupChange }) {
           <div>
             <span className="eyebrow">{month}</span>
             <h2>Usage report</h2>
+            {activeCriteria.length ? (
+              <p className="criteria-note">
+                Filtered by {activeCriteria.join(" · ")} ·{" "}
+                {reports?.session_count ?? 0} sessions ·{" "}
+                {kwhText(reports?.total_kwh ?? 0)} kWh ·{" "}
+                {money(reports?.total_bill ?? 0)}
+              </p>
+            ) : null}
           </div>
           <label className="section-choice">
             <span>GROUP BY</span>
@@ -2798,7 +3668,7 @@ function ReportsPanel({ reports, group, month, onGroupChange }) {
                       <td>{bucket.sessions}</td>
                       <td>
                         <strong className="energy-cell">
-                          {bucket.kwh.toFixed(2)} kWh
+                          {kwhText(bucket.kwh)} kWh
                         </strong>
                       </td>
                       <td>{money(bucket.bill)}</td>
@@ -2830,84 +3700,109 @@ function ReportsPanel({ reports, group, month, onGroupChange }) {
   );
 }
 
-function RecordsTable({ records }) {
-  return records.length ? (
-    <div className="responsive-table">
-      <table>
-        <thead>
-          <tr>
-            <th>SUBMITTED BY</th>
-            <th>SECTION</th>
-            <th>APPLIANCE</th>
-            <th>TIME</th>
-            <th>ENERGY</th>
-            <th>EST. COST</th>
-          </tr>
-        </thead>
-        <tbody>
-          {records.map((record) => (
-            <tr key={record.id}>
-              <td>
-                <span className="table-user">
-                  <span className="account-avatar small-avatar">
-                    {record.username.slice(0, 1).toUpperCase()}
-                  </span>
-                  {record.username}
-                </span>
-              </td>
-              <td>{record.section}</td>
-              <td>
-                {record.appliance}
-                {record.flags?.length ? (
-                  <span className="flag-row">
-                    {record.flags.map((flag) => (
-                      <span
-                        key={flag}
-                        className={`flag-pill${flag === "unusual-duration" ? " flag-red" : ""}`}
-                        title={
-                          flag === "extended-use"
-                            ? "Session ran 8 hours or more"
-                            : "Session is unusually long for this appliance"
-                        }
-                      >
-                        {flag === "extended-use" ? "EXTENDED" : "UNUSUAL"}
-                      </span>
-                    ))}
-                  </span>
-                ) : null}
-              </td>
-              <td>
-                {parseFloat(record.hours.toFixed(2))} hr
-                <span className="cell-sub">
-                  {new Date(record.created_at).toLocaleDateString("en-PH", {
-                    month: "short",
-                    day: "numeric",
-                  })}{" "}
-                  {new Date(record.created_at).toLocaleTimeString("en-PH", {
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
-                </span>
-              </td>
-              <td>
-                <strong className="energy-cell">
-                  {record.energy_kwh.toFixed(2)} kWh
-                </strong>
-              </td>
-              <td>{money(record.estimated_cost_php)}</td>
-            </tr>
+function AboutPage() {
+  const { darkMode, toggleTheme } = useTheme();
+  const sections = [
+    {
+      icon: <Users size={18} />,
+      title: "Role chooser · /mcs",
+      body: "Pick your workspace: a teacher/staff account or the admin console. The landing page also shows the estimate disclaimer and a link back here.",
+    },
+    {
+      icon: <Bolt size={18} />,
+      title: "User workspace · /mcs/user",
+      body: "Sign in with credentials issued by an admin, then log classroom electricity use in two ways: start the ON/OFF timer for live tracking, or open Custom time to backfill hours you forgot to record. Every appliance shows its live kWh estimate, and your submissions list recent entries with estimated cost.",
+    },
+    {
+      icon: <ShieldCheck size={18} />,
+      title: "Admin console · /mcs/admin",
+      body: "Review the six-month consumption dashboard, compare rooms across three buildings, issue or reset user credentials, assign rooms and classroom sections, and maintain the appliance catalog. Rooms that exceed 1.5× their building's per-room average are flagged as high-use.",
+    },
+    {
+      icon: <Activity size={18} />,
+      title: "Energy math",
+      body: "Individual device: E = P × t ÷ 1000 (watts × hours ÷ 1000 = kWh). Multiple devices: E_total = Σ (Pᵢ × tᵢ) ÷ 1000 — the sum of each device's own kWh. Bills are kWh × the configured electricity rate. Values are estimates, not meter readings.",
+    },
+  ];
+  const demoSteps = [
+    "Open /mcs and choose User workspace.",
+    "Sign in with the credentials your administrator issued (an admin creates them under User activity).",
+    "Pick an appliance in the log and press ON — the timer starts and the estimated kWh ticks up live.",
+    "Press OFF to save the session; the record lands in Recent submissions with kWh and cost.",
+    "Forgot to start the timer? Press Custom time, choose the appliance, type the hours you missed, review the E = P × t ÷ 1000 preview, and hit Submit record.",
+    "Sign out, open /mcs/admin, and sign in as admin to see the same data on the dashboard, room map, and monthly reports.",
+  ];
+  return (
+    <main className="workspace-page about-page">
+      <Topbar
+        subtitle="ABOUT WATTWISE"
+        right={
+          <>
+            <ThemeToggle darkMode={darkMode} onToggle={toggleTheme} />
+            <a className="topbar-link" href="/mcs">
+              <ArrowLeft size={15} /> Back to start
+            </a>
+          </>
+        }
+      />
+      <section className="workspace-heading">
+        <div>
+          <div className="eyebrow">
+            <span className="eyebrow-dot" /> CLASSROOM ENERGY MONITORING
+          </div>
+          <h1>
+            About <em>WattWise.</em>
+          </h1>
+          <p>
+            WattWise Classrooms is a lightweight web app that helps Cabiao
+            Senior High School track, estimate, and manage classroom
+            electricity use — without smart-meter hardware. Teachers log
+            appliance run time; the app estimates consumption and cost;
+            administrators see the school-wide picture.
+          </p>
+        </div>
+        <span className="date-stamp">{todayLabel}</span>
+      </section>
+
+      <section className="about-grid">
+        {sections.map((item) => (
+          <article className="about-card" key={item.title}>
+            <span className="about-card-icon">{item.icon}</span>
+            <h2>{item.title}</h2>
+            <p>{item.body}</p>
+          </article>
+        ))}
+      </section>
+
+      <section className="panel about-demo">
+        <div className="panel-heading">
+          <div>
+            <span className="eyebrow">TRY THE DEMO</span>
+            <h2>Walk through a full cycle</h2>
+          </div>
+        </div>
+        <ol className="about-steps">
+          {demoSteps.map((step) => (
+            <li key={step}>{step}</li>
           ))}
-        </tbody>
-      </table>
-    </div>
-  ) : (
-    <div className="empty-state">
-      <span className="empty-mark">
-        <ClipboardList size={22} />
-      </span>
-      <strong>No submissions in this month</strong>
-      <span>New entries from user accounts will be listed here.</span>
-    </div>
+        </ol>
+        <div className="about-demo-actions">
+          <a className="button button-primary" href="/mcs/user">
+            <Bolt size={15} /> Open user workspace
+          </a>
+          <a className="button button-outline" href="/mcs/admin">
+            <ShieldCheck size={15} /> Open admin console
+          </a>
+        </div>
+      </section>
+
+      <footer className="page-footer">
+        <span>ENERGY VALUES ARE ESTIMATES, NOT METER READINGS.</span>
+        <a href="/mcs">
+          WATTWISE MCS <ArrowLeft size={12} />
+        </a>
+      </footer>
+    </main>
   );
 }
 
@@ -2916,5 +3811,6 @@ export default function App() {
   if (path === "/mcs/user/signup") return <SignupPage />;
   if (path === "/mcs/user") return <UserPortal />;
   if (path === "/mcs/admin") return <AdminPortal />;
+  if (path === "/mcs/about") return <AboutPage />;
   return <RoleChoice />;
 }

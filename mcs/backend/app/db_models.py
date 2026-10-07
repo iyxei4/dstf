@@ -29,6 +29,9 @@ class Appliance(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(80), unique=True, index=True)
     wattage: Mapped[float] = mapped_column(Float)
+    # How many identical units this row represents ("2 electric fans"). The
+    # connected load is wattage x quantity, and so is the energy estimate.
+    quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     records: Mapped[list["UsageRecord"]] = relationship(back_populates="appliance")
