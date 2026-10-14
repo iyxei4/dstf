@@ -8,7 +8,9 @@ WattWise Classrooms is a classroom electricity monitoring app. The app is a Reac
 
 - `/mcs`: role chooser.
 - `/mcs/user`: credential sign-in, assigned-room appliance log, timed ON/OFF usage, and recent submissions.
+- `/mcs/user/signup`: registration form (also reachable from the sign-in link).
 - `/mcs/admin`: admin dashboard, six-month reports, buildings/rooms map, user credentials and room assignment, and catalog management.
+- `/mcs/about`: methodology, formula, and estimate disclaimers.
 
 ## Data rules
 
@@ -22,9 +24,16 @@ WattWise Classrooms is a classroom electricity monitoring app. The app is a Reac
 
 ## Frontend conventions
 
-- Reuse the existing React components and CSS tokens in `frontend/src/App.jsx` and `frontend/src/styles.css`.
+- The frontend is split by feature: `frontend/src/App.jsx` is the React Router root
+  (`BrowserRouter basename="/mcs"`); routes in `src/pages/`, components in
+  `src/components/{ui,auth,user,admin,shared}/`, helpers in `src/{constants,hooks,utils}`.
+  `frontend/src/styles.css` is the single stylesheet — keep all tokens and both themes there.
 - The light/dark preference is stored as `wattwise-theme` in localStorage and applied with `document.documentElement.dataset.theme`; keep all routes readable in both modes.
 - Appliance ON/OFF timers are local browser timers, keyed by user account. Stopping sends elapsed hours and the assigned room to the API.
+- Privacy policy and cookie consent are footer-driven: footer links dispatch `open-privacy` /
+  `open-cookies` window events handled by modals in `App.jsx`, and the consent choice is stored
+  as `wattwise-cookie-consent` in localStorage. Keep the footer estimate disclaimer
+  ("not meter readings").
 
 ## Local development and checks
 

@@ -1063,84 +1063,107 @@ a {
 .admin-page {
   padding: 0 38px;
 }
-.admin-online {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  color: #55605a;
-  font: 600 11px var(--mono);
-  letter-spacing: 0.06em;
-}
-.admin-online .live-dot {
-  width: 6px;
-  height: 6px;
-}
 .signout-link {
   padding: 7px 10px;
   border: 1px solid var(--line);
   border-radius: 4px;
 }
 .admin-layout {
-  display: grid;
-  grid-template-columns: 205px minmax(0, 1fr);
-  gap: 32px;
   padding: 30px 0 28px;
 }
-.admin-rail {
+/* Overlay sidebar: the topbar menu button toggles it; it slides over the
+   content instead of reflowing the grid like the old rail did. */
+.admin-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 60;
+  width: 252px;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  padding: 10px 0 0;
+  padding: 24px 14px 16px;
   border-right: 1px solid var(--line);
+  background: var(--panel);
+  transform: translateX(-100%);
+  visibility: hidden;
+  transition:
+    transform 260ms var(--ease),
+    visibility 0s linear 260ms;
 }
-.rail-label {
-  margin: 5px 15px 15px;
+.admin-nav.is-open {
+  transform: translateX(0);
+  visibility: visible;
+  transition:
+    transform 260ms var(--ease),
+    visibility 0s;
+}
+.nav-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: rgb(20 30 22 / 0.38);
+  animation: fadeIn 0.2s ease;
+}
+.nav-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 4px 14px;
+}
+.nav-label {
   color: #5b665c;
   font: 600 11px var(--mono);
   letter-spacing: 0.1em;
 }
-.rail-link {
+.nav-close {
+  width: 30px;
+  height: 30px;
+}
+.nav-link {
   position: relative;
-  min-height: 41px;
+  min-height: 42px;
   display: flex;
   align-items: center;
   gap: 11px;
-  margin-right: 14px;
   padding: 0 13px;
   color: #5b665c;
   border: 0;
   border-radius: 4px;
   background: transparent;
   text-align: left;
-  font-size: 12px;
+  font-size: 12.5px;
 }
-.rail-link:hover {
+.nav-link:hover {
   background: #eff4ee;
   color: #355d3e;
 }
-.rail-link.active {
+.nav-link.active {
   color: #205d39;
   background: #eaf3e9;
   font-weight: 700;
 }
-.rail-active-mark {
-  position: absolute;
-  top: 9px;
-  right: 0;
-  width: 3px;
-  height: 23px;
-  border-radius: 3px;
-  background: #348352;
+.nav-badge {
+  min-width: 19px;
+  height: 19px;
+  display: inline-grid;
+  place-items: center;
+  margin-left: auto;
+  padding: 0 6px;
+  color: #553c07;
+  border-radius: 99px;
+  background: var(--amber);
+  font: 700 10px var(--mono);
 }
-.rail-bottom {
+.nav-bottom {
   display: flex;
   align-items: center;
   gap: 9px;
-  margin: auto 14px 8px 0;
-  padding: 14px 0 0;
+  margin-top: auto;
+  padding: 14px 4px 0;
   border-top: 1px solid var(--line);
 }
-.rail-admin-icon {
+.nav-admin-icon {
   width: 30px;
   height: 30px;
   display: grid;
@@ -1149,15 +1172,15 @@ a {
   border-radius: 50%;
   background: #f8efd9;
 }
-.rail-bottom strong,
-.rail-bottom small {
+.nav-bottom strong,
+.nav-bottom small {
   display: block;
 }
-.rail-bottom strong {
+.nav-bottom strong {
   color: #475248;
   font-size: 11px;
 }
-.rail-bottom small {
+.nav-bottom small {
   margin-top: 3px;
   color: #5b665c;
   font-size: 11px;
@@ -1595,8 +1618,8 @@ button.section-rank:focus-visible {
   color: #909d91;
 }
 :root[data-theme="dark"] .admin-page .topbar,
-:root[data-theme="dark"] .admin-rail,
-:root[data-theme="dark"] .rail-bottom {
+:root[data-theme="dark"] .admin-nav,
+:root[data-theme="dark"] .nav-bottom {
   border-color: var(--line);
 }
 :root[data-theme="dark"] .admin-page .panel,
@@ -1876,16 +1899,13 @@ button.section-rank:focus-visible {
 :root[data-theme="dark"] .energy-cell {
   color: #a5d4ab;
 }
-:root[data-theme="dark"] .admin-online {
+:root[data-theme="dark"] .nav-label {
   color: #bcc8bd;
 }
-:root[data-theme="dark"] .rail-label {
-  color: #bcc8bd;
-}
-:root[data-theme="dark"] .rail-bottom strong {
+:root[data-theme="dark"] .nav-bottom strong {
   color: #e8eee8;
 }
-:root[data-theme="dark"] .rail-bottom small {
+:root[data-theme="dark"] .nav-bottom small {
   color: #bcc8bd;
 }
 :root[data-theme="dark"] .trend-unit {
@@ -1931,10 +1951,10 @@ button.section-rank:focus-visible {
   color: #ffb2a9;
   background: #482c2a;
 }
-:root[data-theme="dark"] .admin-page .rail-link {
+:root[data-theme="dark"] .admin-page .nav-link {
   color: #b2beb3;
 }
-:root[data-theme="dark"] .admin-page .rail-link.active {
+:root[data-theme="dark"] .admin-page .nav-link.active {
   color: #a5d4ab;
   background: #283b2d;
 }
@@ -2152,33 +2172,6 @@ button.section-rank:focus-visible {
 .rank-value small {
   color: #5b665c;
   font-size: 11px;
-}
-.highest-note {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 13px;
-  padding: 10px;
-  border: 1px solid #f0e8d5;
-  border-radius: 4px;
-  background: #fffbf1;
-  color: #7c725a;
-  font-size: 9px;
-}
-.highest-note-icon {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  color: #a4782c;
-  border-radius: 4px;
-  background: #f7edda;
-}
-.highest-note strong {
-  display: block;
-  margin-top: 3px;
-  color: #4b4b3c;
-  font-size: 10px;
 }
 .table-panel {
   padding: 20px 0 0;
@@ -2423,10 +2416,6 @@ tbody tr:last-child td {
   .admin-page {
     padding: 0 54px;
   }
-  .admin-layout {
-    grid-template-columns: 220px minmax(0, 1fr);
-    gap: 38px;
-  }
   .admin-metrics article {
     min-height: 123px;
     padding: 17px 20px;
@@ -2441,10 +2430,6 @@ tbody tr:last-child td {
   }
   .admin-page {
     padding: 0 24px;
-  }
-  .admin-layout {
-    grid-template-columns: 170px minmax(0, 1fr);
-    gap: 20px;
   }
   .admin-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2683,13 +2668,9 @@ tbody tr:last-child td {
     min-width: 0;
     padding: 0 14px;
   }
-  .admin-online {
-    display: none;
-  }
   .admin-layout {
     width: 100%;
     min-width: 0;
-    display: block;
     padding: 16px 0 20px;
   }
   .admin-main,
@@ -2777,36 +2758,6 @@ tbody tr:last-child td {
     align-items: flex-start;
     flex-direction: column;
     padding: 12px 4px 0;
-  }
-  .admin-rail {
-    flex-direction: row;
-    gap: 4px;
-    overflow-x: auto;
-    padding: 0 0 10px;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-  .rail-label,
-  .rail-bottom {
-    display: none;
-  }
-  .rail-link {
-    min-width: max-content;
-    min-height: 44px;
-    gap: 7px;
-    margin: 0;
-    padding: 0 12px;
-    font-size: 12px;
-  }
-  .rail-link svg {
-    width: 14px;
-  }
-  .rail-active-mark {
-    top: auto;
-    right: 8px;
-    bottom: -10px;
-    width: 28px;
-    height: 2px;
   }
   .admin-main {
     padding-top: 18px;
@@ -3101,33 +3052,6 @@ a.button {
 }
 .theme-toggle svg {
   animation: spin-swap 0.45s cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-
-/* Admin rail -------------------------------------------------------------- */
-.rail-link {
-  transition:
-    background-color 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
-    color 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
-    transform 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-.rail-link:hover {
-  transform: translateX(3px);
-}
-.rail-active-mark {
-  animation: mark-in 0.28s cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-.rail-badge {
-  min-width: 19px;
-  height: 19px;
-  display: inline-grid;
-  place-items: center;
-  margin-left: auto;
-  padding: 0 6px;
-  color: #553c07;
-  border-radius: 99px;
-  background: var(--amber);
-  font: 700 10px var(--mono);
-  animation: pop-in 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 /* Cards, tiles, and rows -------------------------------------------------- */
@@ -4296,80 +4220,8 @@ a.button {
 }
 
 /* ==========================================================================
-   Admin restructure — auto-hiding rail, consolidated summary, report search
+   Admin restructure — consolidated summary, report search
    ========================================================================== */
-
-/* Auto-hiding workspace rail: collapses to icons, opens on hover/focus, and a
-   pin keeps it open. Grid-template-columns animates so the content reflows. */
-.admin-layout {
-  grid-template-columns: 74px minmax(0, 1fr);
-  transition: grid-template-columns 280ms var(--ease);
-}
-.admin-layout.rail-wide {
-  grid-template-columns: 205px minmax(0, 1fr);
-}
-.admin-rail .rail-text {
-  white-space: nowrap;
-}
-/* Collapsed: hide labels outright rather than just fading them, otherwise the
-   hidden text still occupies width and overflows the narrow column. */
-.admin-rail:not(.is-open) .rail-text,
-.admin-rail:not(.is-open) .rail-label {
-  display: none;
-}
-.admin-rail .rail-link,
-.admin-rail .rail-pin {
-  margin-right: 8px;
-}
-.admin-rail:not(.is-open) .rail-link,
-.admin-rail:not(.is-open) .rail-pin {
-  justify-content: center;
-  padding: 0;
-}
-.rail-pin {
-  min-height: 36px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin-top: 14px;
-  padding: 0 13px;
-  color: #7c867d;
-  border: 1px dashed var(--line);
-  border-radius: 4px;
-  background: transparent;
-  font-size: 11px;
-  transition:
-    color 160ms var(--ease),
-    border-color 160ms var(--ease),
-    background-color 160ms var(--ease);
-}
-.rail-pin:hover {
-  color: var(--green);
-  border-color: #9dc4a5;
-}
-.rail-pin.is-pinned {
-  color: var(--green);
-  border-style: solid;
-  border-color: #9dc4a5;
-  background: #eaf3e9;
-}
-.rail-pin svg {
-  flex: 0 0 auto;
-  transition: transform 220ms var(--ease);
-}
-.rail-pin.is-pinned svg {
-  transform: rotate(180deg);
-}
-:root[data-theme="dark"] .rail-pin {
-  color: #869387;
-  border-color: #344238;
-}
-:root[data-theme="dark"] .rail-pin:hover,
-:root[data-theme="dark"] .rail-pin.is-pinned {
-  color: #a5d4ab;
-  border-color: #3c5a44;
-  background: #263a2c;
-}
 
 /* Consolidated campus summary ---------------------------------------------- */
 .consolidated-panel {
@@ -4556,26 +4408,576 @@ a.button {
   background: #263a2c;
 }
 
-@media (max-width: 900px) {
-  .admin-layout,
-  .admin-layout.rail-wide {
-    grid-template-columns: minmax(0, 1fr);
+/* ===================== Animations ===================== */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* Page/section entry animations — layered on top of the existing motion
+   system (rise-in / tab-in / pop-in) so new surfaces read as live. */
+.animate-in {
+  animation: fadeIn 0.4s ease-out;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.35s ease-out;
+}
+
+/* Appliance row running state */
+.running-row {
+  background: linear-gradient(90deg, transparent 0%, rgba(39, 130, 83, 0.05) 50%, transparent 100%);
+  animation: pulse 3s ease-in-out infinite;
+}
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  max-width: 900px;
+  width: 100%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-title-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.modal-icon {
+  color: var(--green);
+  flex-shrink: 0;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font: 700 24px var(--display);
+  color: var(--ink);
+}
+
+.modal-subtitle {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.modal-close {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.modal-close:hover {
+  background: var(--green-soft);
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.modal-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 400px;
+}
+
+.modal-toc {
+  width: 280px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--line);
+  padding: 16px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.toc-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  margin-bottom: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font: 600 13px var(--display);
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.toc-item:hover {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.toc-item.active {
+  background: var(--green-soft);
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.toc-number {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  background: var(--line);
+  border-radius: 6px;
+  font: 700 11px var(--mono);
+}
+
+.toc-item.active .toc-number {
+  background: var(--green);
+  color: white;
+}
+
+.modal-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px;
+}
+
+.policy-section h3 {
+  margin: 0 0 20px;
+  font: 700 20px var(--display);
+  color: var(--ink);
+  padding-bottom: 12px;
+  border-bottom: 2px solid var(--green);
+}
+
+.policy-section ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.policy-section li {
+  position: relative;
+  padding: 12px 0 12px 32px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.policy-section li::before {
+  content: "?";
+  position: absolute;
+  left: 0;
+  top: 12px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  background: var(--green-soft);
+  color: var(--green);
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.policy-section li:last-child {
+  border-bottom: 0;
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 20px 24px;
+  border-top: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* Cookie Consent Banner */
+.cookie-banner {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 999;
+  background: var(--panel);
+  border-top: 2px solid var(--green);
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.12);
+}
+
+.cookie-banner-content {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 20px 54px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.cookie-icon {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  background: var(--green-soft);
+  border: 1px solid var(--green);
+  border-radius: 12px;
+  color: var(--green);
+  flex-shrink: 0;
+}
+
+.cookie-text {
+  flex: 1;
+}
+
+.cookie-text strong {
+  display: block;
+  margin-bottom: 6px;
+  font: 700 16px var(--display);
+  color: var(--ink);
+}
+
+.cookie-text p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.cookie-actions {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.cookie-actions .button {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+/* Cookie Preferences Modal */
+.cookie-modal {
+  max-width: 720px;
+}
+
+.cookie-modal-body {
+  flex-direction: column;
+  padding: 24px;
+  overflow-y: auto;
+  gap: 20px;
+}
+
+.cookie-category {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 20px;
+  background: var(--panel);
+}
+
+.cookie-category-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.cookie-category-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.cookie-category-icon {
+  color: var(--green);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.cookie-category-info h4 {
+  margin: 0 0 4px;
+  font: 700 15px var(--display);
+  color: var(--ink);
+}
+
+.cookie-category-info p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Toggle switch */
+.cookie-toggle {
+  position: relative;
+  width: 52px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.cookie-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--line);
+  border-radius: 99px;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+.toggle-slider::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  width: 20px;
+  height: 20px;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  transition: transform 0.3s ease;
+}
+
+.cookie-toggle.on .toggle-slider {
+  background: var(--green);
+}
+
+.cookie-toggle.on .toggle-slider::before {
+  transform: translateX(24px);
+}
+
+.cookie-toggle.disabled .toggle-slider {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cookie-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cookie-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.cookie-list code {
+  font: 500 11px var(--mono);
+  color: var(--green);
+  background: var(--green-soft);
+  padding: 3px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.cookie-list span {
+  color: var(--muted);
+}
+
+/* Button variants for cookie banner */
+.button-secondary {
+  color: var(--ink);
+  background: transparent;
+  border-color: var(--line);
+}
+
+.button-secondary:hover {
+  background: var(--green-soft);
+  border-color: var(--green);
+}
+
+/* Manual form close button */
+.manual-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+}
+
+.manual-record-form {
+  position: relative;
+}
+
+/* Responsive modal */
+@media (max-width: 768px) {
+  .modal {
+    max-height: 95vh;
+    margin: 10px;
+  }
+
+  .modal-body {
+    flex-direction: column;
+  }
+
+  .modal-toc {
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 12px;
+  }
+
+  .toc-item {
+    white-space: nowrap;
+    margin-bottom: 0;
+  }
+
+  .modal-content {
+    padding: 24px;
+  }
+
+  .cookie-banner-content {
+    flex-direction: column;
+    text-align: center;
+    padding: 24px;
+  }
+
+  .cookie-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .cookie-actions .button {
+    width: 100%;
+  }
+
+  .cookie-category-header {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 
-/* At 720px the rail becomes a horizontal strip (rules above). Restore the
-   labels and drop the pin so navigation stays usable there. */
-@media (max-width: 720px) {
-  .admin-rail:not(.is-open) .rail-text,
-  .admin-rail:not(.is-open) .rail-label {
-    display: inline;
-  }
-  .admin-rail:not(.is-open) .rail-link {
-    justify-content: flex-start;
-    padding: 0 12px;
-    margin: 0;
-  }
-  .rail-pin {
-    display: none;
-  }
+/* Dark mode adjustments */
+:root[data-theme="dark"] .running-row {
+  background: linear-gradient(90deg, transparent 0%, rgba(121, 189, 139, 0.08) 50%, transparent 100%);
+}
+
+:root[data-theme="dark"] .modal {
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+:root[data-theme="dark"] .modal-toc {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+:root[data-theme="dark"] .modal-footer {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+:root[data-theme="dark"] .cookie-list code {
+  background: var(--green-soft);
+}
+
+:root[data-theme="dark"] .toggle-slider::before {
+  background: #e8eee8;
+}
+
+:root[data-theme="dark"] .cookie-banner {
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.3);
+}
+
+/* Admin nav sidebar dark mode ---------------------------------------------- */
+:root[data-theme="dark"] .admin-nav {
+  background: var(--panel);
+}
+:root[data-theme="dark"] .nav-link {
+  color: #b2beb3;
+}
+:root[data-theme="dark"] .nav-link:hover {
+  background: #212b23;
+  color: #a5d4ab;
+}
+:root[data-theme="dark"] .nav-link.active {
+  background: #283b2d;
+}
+:root[data-theme="dark"] .nav-admin-icon {
+  color: #d8bd83;
+  background: #2f2a1c;
+}
+:root[data-theme="dark"] .nav-scrim {
+  background: rgb(5 8 6 / 0.55);
+}
+
+/* Section catalog pager ---------------------------------------------------- */
+.catalog-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 14px 2px 2px;
+}
+.catalog-pager .button {
+  min-height: 32px;
+  padding: 0 14px;
+  font-size: 11px;
+}
+.catalog-pager .button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.pager-status {
+  color: var(--muted);
+  font: 600 11px var(--mono);
+  letter-spacing: 0.05em;
 }
