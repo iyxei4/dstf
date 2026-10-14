@@ -80,6 +80,29 @@ a {
   margin: 0 auto;
   padding: 0 54px;
 }
+/* Backdrop for the role chooser: faint dot grid + one soft glow, painted
+   above the page background but below all content. */
+.role-page {
+  position: relative;
+  z-index: 0;
+}
+.role-page::before,
+.role-page::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+.role-page::before {
+  background-image: radial-gradient(rgba(39, 130, 83, 0.16) 1px, transparent 1.2px);
+  background-size: 26px 26px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, rgba(0, 0, 0, 0.45) 32%, transparent 60%);
+  mask-image: linear-gradient(to bottom, #000 0, rgba(0, 0, 0, 0.45) 32%, transparent 60%);
+}
+.role-page::after {
+  background: radial-gradient(660px 400px at 82% 2%, rgba(39, 130, 83, 0.14), transparent 70%);
+}
 .topbar {
   height: 76px;
   display: flex;
@@ -234,6 +257,89 @@ a {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.7;
+}
+/* Hero: intro copy beside a decorative load-profile card */
+.role-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 460px);
+  gap: 56px;
+  align-items: center;
+}
+.role-visual {
+  padding: 20px 22px 16px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  box-shadow: 0 18px 44px -30px rgba(21, 46, 32, 0.4);
+}
+.role-visual-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.visual-tag {
+  padding: 4px 9px;
+  color: var(--green-dark);
+  background: #e5f3e8;
+  border-radius: 999px;
+  font: 600 10px var(--mono);
+  letter-spacing: 0.08em;
+}
+@keyframes chart-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.visual-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 14px;
+  overflow: visible;
+}
+.chart-grid line {
+  stroke: var(--line);
+  stroke-width: 1;
+  stroke-dasharray: 3 6;
+}
+.chart-area {
+  fill: url(#hero-area);
+  animation: fadeIn 0.9s ease-out 1.05s backwards;
+}
+.chart-line {
+  fill: none;
+  stroke: var(--green);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+  animation: chart-draw 1.5s var(--ease) 0.35s forwards;
+}
+.chart-tip {
+  fill: var(--green);
+  animation:
+    pop-in 0.4s var(--ease) 1.65s backwards,
+    soft-pulse 1.9s ease-in-out 2.1s infinite;
+}
+.visual-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  color: var(--muted);
+  font: 600 9px var(--mono);
+  letter-spacing: 0.06em;
+}
+.visual-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 12px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  font: 600 9.5px var(--mono);
+  letter-spacing: 0.07em;
 }
 .role-card {
   min-height: 286px;
@@ -1712,6 +1818,7 @@ button.section-rank:focus-visible {
 }
 :root[data-theme="dark"] .role-card,
 :root[data-theme="dark"] .role-about,
+:root[data-theme="dark"] .role-visual,
 :root[data-theme="dark"] .auth-layout,
 :root[data-theme="dark"] .auth-form,
 :root[data-theme="dark"] .summary-tile,
@@ -1728,6 +1835,19 @@ button.section-rank:focus-visible {
 }
 :root[data-theme="dark"] .admin-role .role-card-bottom {
   color: #e9bd68;
+}
+:root[data-theme="dark"] .role-visual {
+  box-shadow: 0 18px 44px -30px rgba(0, 0, 0, 0.6);
+}
+:root[data-theme="dark"] .visual-tag {
+  color: #a8d9bc;
+  background: rgba(66, 163, 106, 0.16);
+}
+:root[data-theme="dark"] .role-page::before {
+  background-image: radial-gradient(rgba(140, 190, 155, 0.13) 1px, transparent 1.2px);
+}
+:root[data-theme="dark"] .role-page::after {
+  background: radial-gradient(660px 400px at 82% 2%, rgba(66, 163, 106, 0.13), transparent 70%);
 }
 :root[data-theme="dark"] .role-card-copy h2,
 :root[data-theme="dark"] .workspace-heading h1,
@@ -2445,6 +2565,13 @@ tbody tr:last-child td {
   .auth-page {
     padding: 0 30px;
   }
+  .role-hero {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+  .role-visual {
+    max-width: 480px;
+  }
   .admin-page {
     padding: 0 24px;
   }
@@ -2944,11 +3071,26 @@ tbody tr:last-child td {
 .auth-form {
   animation: rise-in 0.55s cubic-bezier(0.22, 0.61, 0.36, 1) 0.07s backwards;
 }
+.role-intro .eyebrow {
+  animation: rise-in 0.45s var(--ease) 0.04s backwards;
+}
+.role-intro h1 {
+  animation: rise-in 0.55s var(--ease) 0.1s backwards;
+}
+.role-intro > p {
+  animation: rise-in 0.5s var(--ease) 0.18s backwards;
+}
+.role-visual {
+  animation: rise-in 0.55s var(--ease) 0.26s backwards;
+}
 .role-card {
-  animation: rise-in 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+  animation: rise-in 0.5s var(--ease) 0.34s backwards;
 }
 .role-card:nth-child(2) {
-  animation-delay: 0.09s;
+  animation-delay: 0.43s;
+}
+.role-about {
+  animation: rise-in 0.5s var(--ease) 0.5s backwards;
 }
 .workspace-heading,
 .admin-heading {
