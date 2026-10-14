@@ -2,6 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // The app lives under the /mcs basename (React Router). Any other path
+      // matches no route and renders a blank page, so send stray entries here
+      // (bare domain, old bookmarks) to the role chooser before React boots.
+      (function () {
+        var p = location.pathname;
+        if (p !== "/mcs" && p.indexOf("/mcs/") !== 0) {
+          location.replace("/mcs" + location.search + location.hash);
+        }
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f6f7f1" />
     <meta
