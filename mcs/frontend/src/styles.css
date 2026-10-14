@@ -220,6 +220,21 @@ a {
   gap: 18px;
   max-width: 1010px;
 }
+.role-about {
+  max-width: 1010px;
+  margin-top: 18px;
+  padding: 20px 24px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.role-about p {
+  max-width: 780px;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
 .role-card {
   min-height: 286px;
   display: flex;
@@ -1696,6 +1711,7 @@ button.section-rank:focus-visible {
   color: #bcc8bd;
 }
 :root[data-theme="dark"] .role-card,
+:root[data-theme="dark"] .role-about,
 :root[data-theme="dark"] .auth-layout,
 :root[data-theme="dark"] .auth-form,
 :root[data-theme="dark"] .summary-tile,
@@ -1723,6 +1739,7 @@ button.section-rank:focus-visible {
 }
 :root[data-theme="dark"] .role-card-copy p,
 :root[data-theme="dark"] .role-intro > p,
+:root[data-theme="dark"] .role-about p,
 :root[data-theme="dark"] .workspace-heading > div > p,
 :root[data-theme="dark"] .form-intro,
 :root[data-theme="dark"] .auth-footnote,

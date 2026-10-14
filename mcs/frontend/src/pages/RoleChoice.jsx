@@ -44,6 +44,15 @@ export function RoleChoice() {
           color="admin"
         />
       </section>
+      <section className="role-about">
+        <span className="eyebrow">ABOUT WATTWISE</span>
+        <p>
+          WattWise Classrooms turns appliance run time into estimated energy
+          use — watts × hours ÷ 1000 — so teachers can log what they switch on
+          and managers can see which rooms use the most. All figures are
+          estimates, not meter readings.
+        </p>
+      </section>
       <PageFooter
         showPrivacy
         onPrivacyClick={() => window.dispatchEvent(new CustomEvent("open-privacy"))}
