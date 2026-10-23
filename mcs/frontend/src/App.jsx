@@ -5,14 +5,14 @@ import { RoleChoice } from "./pages/RoleChoice";
 import { AboutPage } from "./components/shared/AboutPage";
 import { PrivacyPolicy } from "./components/shared/PrivacyPolicy";
 import { CookieConsent } from "./components/shared/CookieConsent";
-import { NotFoundPage } from "./pages/NotFoundPage";
+import { NotFoundPage } = from "./pages/NotFoundPage";
 import { ServerErrorPage } from "./pages/ServerErrorPage";
-import { TermsPage } from "./pages/TermsPage";
+import { TermsPage } = from "./pages/TermsPage";
 import {
   CampusRoute,
   DemoAdminRoute,
   DemoUserRoute,
-} from "./components/auth/CampusRoute";
+} = from "./components/auth/CampusRoute";
 // Lazy-loaded pages for code splitting
 const AuthLandingPage = lazy(() => import("./pages/AuthLandingPage").then((m) => ({ default: m.AuthLandingPage })));
 const OnboardingWizard = lazy(() => import("./pages/OnboardingWizard").then((m) => ({ default: m.OnboardingWizard })));
@@ -53,6 +53,7 @@ export default function App() {
           <Route path="/user" element={<UserPage />} />
           <Route path="/user/signup" element={<UserPage />} />
           <Route path="/admin" element={<AdminPage />} />
+          <Route path="/mcs/admin" element={<AdminPage />} />
           {/* Fixed demo routes. The private site-owner console stays at /admin. */}
           <Route
             path="/mcs/admin/*"
