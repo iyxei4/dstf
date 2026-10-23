@@ -10,8 +10,7 @@
     },
     "api": {
       "root": "mcs/backend",
-      "entrypoint": "app.serverless_main:app",
-      "runtime": "python3.11"
+      "entrypoint": "app.serverless_main:app"
     }
   },
   "rewrites": [
