@@ -1980,7 +1980,12 @@ async def add_admin_section(
     try:
         created = await db.insert(
             "classroom_sections",
-            {"name": name, "grade": grade, "section_name": section_name},
+            {
+                "name": name,
+                "grade": grade,
+                "section_name": section_name,
+                "created_at": datetime.utcnow().isoformat(),
+            },
         )
     except httpx.HTTPStatusError as error:
         if error.response.status_code == 409:
@@ -2192,12 +2197,14 @@ async def admin_dashboard(
                 "records": section_record_counts.get(section["id"], 0),
             })
 
-        # Six-month trend, bucketed from one bounded read.
+        # Six-month trend ending with the selected month, bucketed from one
+        # bounded read. Month stepping must use calendar months so no month
+        # is skipped by a fixed 32-day offset.
+        base_index = start.year * 12 + start.month - 1
         month_starts = []
-        for i in range(6):
-            month_start = (now.replace(day=1) - timedelta(days=32 * i)).replace(day=1)
-            month_starts.append(month_start)
-        month_starts.reverse()  # oldest to newest
+        for offset in range(5, -1, -1):
+            year, month_number = divmod(base_index - offset, 12)
+            month_starts.append(datetime(year, month_number + 1, 1))
         trend_rows = await _select_all(
             db,
             "usage_records",
@@ -2210,7 +2217,7 @@ async def admin_dashboard(
         }
         for row in trend_rows:
             moment = _parse_db_datetime(row.get("created_at"))
-            if moment is None:
+            if moment is None or moment >= end:
                 continue
             key = moment.strftime("%Y-%m")
             if key in monthly_totals:
