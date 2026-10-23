@@ -54,6 +54,7 @@ export default function App() {
           <Route path="/user/signup" element={<UserPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/mcs/admin" element={<AdminPage />} />
+          <Route path="/mcs/admin/" element={<AdminPage />} />
           {/* Fixed demo routes. The private site-owner console stays at /admin. */}
           <Route
             path="/mcs/admin/*"
