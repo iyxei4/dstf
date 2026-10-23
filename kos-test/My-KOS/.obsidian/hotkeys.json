@@ -1,0 +1,57 @@
+[
+  {
+    "command": "daily-notes:open",
+    "keys": ["Ctrl+Shift+D"],
+    "modifiers": []
+  },
+  {
+    "command": "daily-notes:open-next",
+    "keys": ["Ctrl+Shift+Right"],
+    "modifiers": []
+  },
+  {
+    "command": "daily-notes:open-prev",
+    "keys": ["Ctrl+Shift+Left"],
+    "modifiers": []
+  },
+  {
+    "command": "templates:insert",
+    "keys": ["Ctrl+T"],
+    "modifiers": []
+  },
+  {
+    "command": "quick-switcher:open",
+    "keys": ["Ctrl+O"],
+    "modifiers": []
+  },
+  {
+    "command": "command-palette:open",
+    "keys": ["Ctrl+P"],
+    "modifiers": []
+  },
+  {
+    "command": "graph:open",
+    "keys": ["Ctrl+G"],
+    "modifiers": []
+  },
+  {
+    "command": "file-explorer:focus",
+    "keys": ["Ctrl+E"],
+    "modifiers": []
+  },
+  {
+    "command": "search:open",
+    "keys": ["Ctrl+Shift+F"],
+    "modifiers": []
+  },
+  {
+    "command": "workspace:save",
+    "keys": ["Ctrl+Shift+W"],
+    "modifiers": []
+  },
+  {
+    "command": "note-composer:new-from-template",
+    "keys": ["Ctrl+N"],
+    "modifiers": []
+  }
+]

@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
@@ -8,13 +9,31 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 
 
 def _normalize_database_url(url: str) -> str:
-    """Accept raw Supabase/Postgres URIs: force the psycopg3 driver + SSL."""
+    """Accept raw Supabase/Postgres URIs: force the psycopg3 driver + SSL + IPv4."""
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://") :]
     if url.startswith("postgresql://") and not url.startswith("postgresql+"):
         url = "postgresql+psycopg://" + url[len("postgresql://") :]
     if url.startswith("postgresql+") and "sslmode=" not in url:
         url += ("&" if "?" in url else "?") + "sslmode=require"
+    
+    # Force IPv4 for Supabase connections to avoid IPv6 issues on Vercel
+    # Use the connection pooler with IPv4 if available
+    if "psycopg" in url and "supabase" in url:
+        parsed = urlparse(url)
+        # Supabase pooler uses port 6543 and forces IPv4
+        # Replace the host with the pooler host if it's a direct connection
+        if parsed.port == 5432 or parsed.port is None:
+            # Use the pooler endpoint: replace host with pooler host
+            # Format: aws-0-region.pooler.supabase.com
+            host = parsed.hostname
+            if host and ".supabase.co" in host:
+                # Convert to pooler host
+                pooler_host = host.replace(".supabase.co", ".pooler.supabase.com")
+                parsed = parsed._replace(netloc=f"{pooler_host}:6543")
+                # Rebuild URL with pooler
+                url = urlunparse(parsed)
+    
     return url
 
 

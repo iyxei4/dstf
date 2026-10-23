@@ -10,7 +10,7 @@
     },
     "api": {
       "root": "mcs/backend",
-      "entrypoint": "app.main:app"
+      "entrypoint": "app.serverless_main:app"
     }
   },
   "rewrites": [

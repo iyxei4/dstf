@@ -1,0 +1,8 @@
+{
+  "folder": "07 - Daily/Daily-Notes",
+  "template": "08 - Templates/Reviews/Daily-Note.md",
+  "format": "YYYY-MM-DD",
+  "startAt": 0,
+  "confirmBeforeCreate": false,
+  "openOnStartup": true
+}

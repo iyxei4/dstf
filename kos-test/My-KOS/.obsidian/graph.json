@@ -1,0 +1,28 @@
+{
+  "scale": 1.0,
+  "center": true,
+  "forceStrength": -30,
+  "linkDistance": 30,
+  "groupBy": "folder",
+  "colors": {
+    "00 - System": "#247a4b",
+    "01 - Business": "#e9a93c",
+    "02 - Projects": "#54849b",
+    "03 - Personal": "#d64545",
+    "04 - Hobbies": "#a56eff",
+    "05 - Knowledge": "#42a36a",
+    "06 - Inbox": "#9b6a1b",
+    "07 - Daily": "#79bd8b",
+    "08 - Templates": "#8bb5c5",
+    "09 - Attachments": "#5b665c",
+    "99 - Archive": "#a2ada3"
+  },
+  "tags": [],
+  "filter": [],
+  "showTags": true,
+  "showAttachments": false,
+  "collapseFilter": true,
+  "layout": "force-directed",
+  "nodeSize": 8,
+  "lineWidth": 1
+}

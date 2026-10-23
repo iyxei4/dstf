@@ -1,0 +1,11 @@
+{
+  "devDependencies": {
+    "@omniroute/opencode-provider": "^0.1.0"
+  },
+  "dependencies": {
+    "@omniroute/opencode-plugin": "^0.2.1"
+  },
+  "allowScripts": {
+    "@omniroute/opencode-plugin@0.2.1": true
+  }
+}

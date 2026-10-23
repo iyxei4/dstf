@@ -1,0 +1,23 @@
+{
+  "baseFontFamily": "Inter, system-ui, sans-serif",
+  "headingFontFamily": "Inter, system-ui, sans-serif",
+  "showUnsupportedFiles": true,
+  "legacyEditor": false,
+  "livePreview": true,
+  "promptDelete": true,
+  "alwaysUpdateLinks": true,
+  "newLinkFormat": "relative",
+  "useMarkdownLinks": true,
+  "showInlineTitle": true,
+  "showFrontmatter": true,
+  "spellcheck": true,
+  "spellcheckLanguages": [
+    "en-US"
+  ],
+  "foldHeading": true,
+  "foldIndent": true,
+  "lineWrap": true,
+  "readableLineLength": true,
+  "showLineNumber": false,
+  "tabSize": 2
+}

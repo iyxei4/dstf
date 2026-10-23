@@ -1,0 +1,29 @@
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.pfx
+*.p12
+secrets/
+credentials/
+installer/local-config.json
+logs/*
+!logs/.gitkeep
+00 - System/State/
+00 - System/Reports/
+00 - System/Linked Sources/*.json
+00 - System/Installation/installer-state.json
+00 - System/Installation/INSTALLATION-REPORT.md
+00 - System/Installation/backups/
+node_modules/
+.DS_Store
+Thumbs.db
+.obsidian/workspace*
+
+# v1.2 transactional and private runtime state
+00 - System/Installation/Runs/
+00 - System/Installation/operation.lock
+00 - System/State/
+00 - System/Reports/
+00 - System/Licenses/

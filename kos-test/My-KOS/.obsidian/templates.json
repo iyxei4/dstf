@@ -1,0 +1,6 @@
+{
+  "folder": "08 - Templates",
+  "dateFormat": "YYYY-MM-DD",
+  "timeFormat": "HH:mm",
+  "triggerOnFileCreation": true
+}
