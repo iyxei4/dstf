@@ -833,6 +833,128 @@ def _room_identity(room: dict) -> dict:
     }
 
 
+def _parse_db_datetime(value: datetime | str | None) -> datetime | None:
+    """Parse a PostgREST timestamp into a naive UTC datetime."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+async def _select_all(
+    db: SupabaseClient,
+    table: str,
+    columns: str = "*",
+    filters: dict | None = None,
+    order: str | None = None,
+    page_size: int = 1000,
+) -> list[dict]:
+    """Read every matching row, paging past the PostgREST response limit."""
+    rows: list[dict] = []
+    offset = 0
+    while True:
+        page = await db.select(
+            table,
+            columns=columns,
+            filters=filters,
+            order=order,
+            limit=page_size,
+            offset=offset,
+        )
+        rows.extend(page)
+        if len(page) < page_size:
+            return rows
+        offset += page_size
+
+
+def _room_status(average: float, building_average: float) -> str:
+    """High-use at 1.5x the building's per-room average (per project rules)."""
+    return "high" if building_average > 0 and average >= building_average * 1.5 else "average"
+
+
+async def _room_map_stats(
+    db: SupabaseClient,
+) -> tuple[list[dict], dict[int, dict], dict[str, float], dict[int, list[str]]]:
+    """Trailing-30-day usage per room, per-building average, and assigned users."""
+    cutoff = (datetime.utcnow() - timedelta(days=30)).isoformat()
+    rooms = await _ordered_rooms(db)
+    room_usage: dict[int, dict] = {
+        room["id"]: {"kwh": 0.0, "appliance_ids": set(), "submissions": 0}
+        for room in rooms
+    }
+    usage = await _select_all(
+        db,
+        "usage_records",
+        columns="room_id,appliance_id,energy_kwh",
+        filters={"created_at": f"gte.{cutoff}"},
+        order="created_at,id",
+    )
+    for row in usage:
+        metrics = room_usage.get(row.get("room_id"))
+        if metrics is None:
+            continue
+        metrics["kwh"] += float(row.get("energy_kwh") or 0)
+        metrics["submissions"] += 1
+        if row.get("appliance_id") is not None:
+            metrics["appliance_ids"].add(row["appliance_id"])
+
+    building_totals: dict[str, float] = {}
+    building_counts: dict[str, int] = {}
+    for room in rooms:
+        code = room.get("building_code", "")
+        building_totals[code] = building_totals.get(code, 0.0) + room_usage[room["id"]]["kwh"]
+        building_counts[code] = building_counts.get(code, 0) + 1
+    building_average = {
+        code: building_totals[code] / building_counts[code] if building_counts[code] else 0.0
+        for code in building_totals
+    }
+
+    assigned = await _select_all(
+        db,
+        "classroom_users",
+        columns="username,assigned_room_id",
+        order="username",
+    )
+    room_users: dict[int, list[str]] = {room["id"]: [] for room in rooms}
+    for user in assigned:
+        room_id = user.get("assigned_room_id")
+        if room_id in room_users:
+            room_users[room_id].append(user.get("username", ""))
+
+    return rooms, room_usage, building_average, room_users
+
+
+def _room_row(
+    room: dict,
+    metrics: dict,
+    building_average: float,
+    assigned_users: list[str],
+) -> dict:
+    average = metrics["kwh"]
+    room_type = room.get("room_type") or "classroom"
+    return {
+        **_room_identity(room),
+        "display_name": room.get("room_name") or f"Room {room.get('room_number')}",
+        "display_type": (
+            room.get("custom_type") if room_type == "custom" else room_type
+        ),
+        "average_kwh": round(average, 4),
+        "appliance_count": len(metrics["appliance_ids"]),
+        "submission_count": metrics["submissions"],
+        "assigned_users": assigned_users,
+        "building_average_kwh": round(building_average, 3),
+        "usage_status": _room_status(average, building_average),
+    }
+
+
 @app.get("/api/sections")
 async def list_sections(response: Response, db: SupabaseClient = Depends(get_db)) -> list[dict]:
     _catalog_cache(response)
@@ -1489,6 +1611,435 @@ async def delete_appliance(
     return {"status": "appliance removed"}
 
 
+# --- Admin reports, room map, and section management ---
+
+@app.get("/api/admin/reports", dependencies=[Depends(require_admin)])
+async def admin_reports(
+    month: str | None = None,
+    group: str = "day",
+    building: str | None = None,
+    room_id: int | None = None,
+    section_id: int | None = None,
+    appliance_id: int | None = None,
+    db: SupabaseClient = Depends(get_db),
+) -> dict:
+    """Daily / weekly / monthly usage buckets plus usage patterns for a month."""
+    if group not in ("day", "week", "month"):
+        raise HTTPException(status_code=422, detail="Group must be day, week, or month.")
+    now = datetime.now()
+    month = month or now.strftime("%Y-%m")
+    start, end = _month_bounds(month)
+
+    filters: dict[str, str] = {}
+    building_room_ids: set[int] | None = None
+    if building:
+        building_rooms = await db.select(
+            "classroom_rooms",
+            columns="id",
+            filters={"building_code": f"eq.{building}"},
+        )
+        building_room_ids = {room["id"] for room in building_rooms}
+    if room_id:
+        filters["room_id"] = f"eq.{room_id}"
+    if section_id:
+        filters["section_id"] = f"eq.{section_id}"
+    if appliance_id:
+        filters["appliance_id"] = f"eq.{appliance_id}"
+
+    appliance_names = {
+        item["id"]: item["name"]
+        for item in await db.select("appliances", columns="id,name")
+    }
+    room_labels = {
+        item["id"]: f"{item.get('building_code', '')} {item.get('room_number', '')}"
+        for item in await db.select(
+            "classroom_rooms",
+            columns="id,building_code,room_number",
+        )
+    }
+
+    if group == "month":
+        bucket_keys: list[str] = []
+        cursor = datetime(start.year, start.month, 1)
+        for _ in range(12):
+            bucket_keys.append(cursor.strftime("%Y-%m"))
+            previous = cursor - timedelta(days=1)
+            cursor = datetime(previous.year, previous.month, 1)
+        scan_start = datetime.strptime(min(bucket_keys), "%Y-%m")
+    else:
+        bucket_keys = []
+        scan_start = start
+
+    records: list[dict] = []
+    scan_records: list[dict] = []
+    if building_room_ids is None or building_room_ids:
+        query_filters = dict(filters)
+        query_filters["created_at"] = f"gte.{scan_start.isoformat()}"
+        rows = await _select_all(
+            db,
+            "usage_records",
+            columns=(
+                "id,energy_kwh,started_at,created_at,occupants,"
+                "appliance_id,room_id,section_id,user_id"
+            ),
+            filters=query_filters,
+            order="created_at,id",
+        )
+        for row in rows:
+            moment = _parse_db_datetime(row.get("started_at") or row.get("created_at"))
+            created = _parse_db_datetime(row.get("created_at")) or moment
+            if moment is None or created is None or created >= end:
+                continue
+            if building_room_ids is not None and row.get("room_id") not in building_room_ids:
+                continue
+            record = {
+                **row,
+                "energy_kwh": float(row.get("energy_kwh") or 0),
+                "_moment": moment,
+            }
+            scan_records.append(record)
+            # The twelve-month bucket series scans earlier months too, but
+            # totals and patterns remain scoped to the selected month.
+            if created >= start:
+                records.append(record)
+
+    def bucket_key(moment: datetime) -> str:
+        if group == "day":
+            return moment.strftime("%Y-%m-%d")
+        if group == "week":
+            monday = moment - timedelta(days=moment.weekday())
+            return monday.strftime("%Y-%m-%d")
+        return moment.strftime("%Y-%m")
+
+    def bucket_label(key: str) -> str:
+        if group == "day":
+            moment = datetime.strptime(key, "%Y-%m-%d")
+            return f"{moment.strftime('%b')} {moment.day}"
+        if group == "week":
+            monday = datetime.strptime(key, "%Y-%m-%d")
+            sunday = min(monday + timedelta(days=6), end - timedelta(days=1))
+            return f"{monday.strftime('%b')} {monday.day} – {sunday.strftime('%b')} {sunday.day}"
+        moment = datetime.strptime(key, "%Y-%m")
+        return moment.strftime("%b %Y")
+
+    bucketed: dict[str, list[dict]] = {}
+    if group == "month":
+        for key in bucket_keys:
+            bucketed[key] = []
+        for record in scan_records:
+            key = record["_moment"].strftime("%Y-%m")
+            if key in bucketed:
+                bucketed[key].append(record)
+    else:
+        if group == "day":
+            for day in range(1, monthrange(start.year, start.month)[1] + 1):
+                bucketed[datetime(start.year, start.month, day).strftime("%Y-%m-%d")] = []
+        else:
+            monday = start - timedelta(days=start.weekday())
+            while monday < end:
+                bucketed[monday.strftime("%Y-%m-%d")] = []
+                monday += timedelta(days=7)
+        for record in records:
+            bucketed.setdefault(bucket_key(record["_moment"]), []).append(record)
+
+    def summarize(rows: list[dict]) -> dict:
+        top: dict[str, float] = {}
+        for record in rows:
+            name = appliance_names.get(record.get("appliance_id"))
+            if name is not None:
+                top[name] = top.get(name, 0.0) + record["energy_kwh"]
+        kwh = sum(record["energy_kwh"] for record in rows)
+        rounded_kwh, bill = _kwh_and_bill(kwh)
+        return {
+            "sessions": len(rows),
+            "kwh": rounded_kwh,
+            "bill": bill,
+            "top_appliance": max(top, key=top.get) if top else None,
+        }
+
+    buckets = [
+        {"period": bucket_label(key), **summarize(rows)}
+        for key, rows in sorted(bucketed.items())
+    ]
+
+    weekday_kwh = [0.0] * 7
+    hour_kwh = [0.0] * 24
+    appliance_kwh: dict[str, float] = {}
+    room_kwh: dict[str, float] = {}
+    occupant_total = 0
+    occupant_count = 0
+    for record in records:
+        moment = record["_moment"]
+        energy = record["energy_kwh"]
+        weekday_kwh[moment.weekday()] += energy
+        hour_kwh[moment.hour] += energy
+        appliance_name = appliance_names.get(record.get("appliance_id"))
+        if appliance_name is not None:
+            appliance_kwh[appliance_name] = (
+                appliance_kwh.get(appliance_name, 0.0) + energy
+            )
+        room_label = (
+            room_labels.get(record.get("room_id"))
+            if record.get("room_id")
+            else "Unassigned"
+        )
+        if room_label is None:
+            room_label = f"Room {record.get('room_id')}"
+        room_kwh[room_label] = room_kwh.get(room_label, 0.0) + energy
+        occupants = record.get("occupants")
+        if occupants is not None:
+            occupant_total += float(occupants)
+            occupant_count += 1
+
+    def hour_label(hour: int) -> str:
+        return f"{hour % 12 or 12} {'AM' if hour < 12 else 'PM'}"
+
+    patterns = {
+        "peak_weekday": (
+            {
+                "day": day_name[max(range(7), key=lambda index: weekday_kwh[index])],
+                "kwh": round(max(weekday_kwh), KWH_PRECISION),
+            }
+            if records
+            else None
+        ),
+        "peak_hour": (
+            {
+                "hour": hour_label(max(range(24), key=lambda index: hour_kwh[index])),
+                "kwh": round(max(hour_kwh), KWH_PRECISION),
+            }
+            if records
+            else None
+        ),
+        "top_appliance": (
+            {
+                "name": max(appliance_kwh, key=appliance_kwh.get),
+                "kwh": round(max(appliance_kwh.values()), KWH_PRECISION),
+            }
+            if appliance_kwh
+            else None
+        ),
+        "busiest_room": (
+            {
+                "room": max(room_kwh, key=room_kwh.get),
+                "kwh": round(max(room_kwh.values()), KWH_PRECISION),
+            }
+            if room_kwh
+            else None
+        ),
+        "avg_occupants": (
+            round(occupant_total / occupant_count, 1) if occupant_count else None
+        ),
+    }
+    total_kwh = sum(record["energy_kwh"] for record in records)
+    report_kwh, report_bill = _kwh_and_bill(total_kwh)
+    return {
+        "month": month,
+        "group": group,
+        "buckets": buckets,
+        "patterns": patterns,
+        "criteria": {
+            "building": building,
+            "room_id": room_id,
+            "section_id": section_id,
+            "appliance_id": appliance_id,
+        },
+        "total_kwh": report_kwh,
+        "total_bill": report_bill,
+        "session_count": len(records),
+        "room_ranking": [
+            {"room": name, "kwh": round(value, KWH_PRECISION)}
+            for name, value in sorted(
+                room_kwh.items(), key=lambda item: item[1], reverse=True
+            )
+        ],
+        "appliance_ranking": [
+            {"name": name, "kwh": round(value, KWH_PRECISION)}
+            for name, value in sorted(
+                appliance_kwh.items(), key=lambda item: item[1], reverse=True
+            )
+        ],
+    }
+
+
+@app.get("/api/admin/rooms", dependencies=[Depends(require_admin)])
+async def admin_rooms(db: SupabaseClient = Depends(get_db)) -> dict:
+    rooms, room_usage, building_average, room_users = await _room_map_stats(db)
+    buildings = []
+    building_names = {
+        room.get("building_code", ""): room.get("building_name", "")
+        for room in rooms
+    }
+    for building_code, building_name in building_names.items():
+        building_rooms = [
+            room for room in rooms if room.get("building_code") == building_code
+        ]
+        average = building_average.get(building_code, 0.0)
+        room_rows = [
+            _room_row(room, room_usage[room["id"]], average, room_users[room["id"]])
+            for room in building_rooms
+        ]
+        buildings.append(
+            {
+                "code": building_code,
+                "name": building_name,
+                "average_kwh_per_room": round(average, 4),
+                "total_kwh": round(sum(row["average_kwh"] for row in room_rows), 3),
+                "rooms": room_rows,
+            }
+        )
+    return {"period_days": 30, "buildings": buildings}
+
+
+@app.get("/api/admin/rooms/{room_id}", dependencies=[Depends(require_admin)])
+async def admin_room_detail(
+    room_id: int,
+    db: SupabaseClient = Depends(get_db),
+) -> dict:
+    rooms, room_usage, building_average, room_users = await _room_map_stats(db)
+    room = next((item for item in rooms if item.get("id") == room_id), None)
+    if room is None:
+        raise HTTPException(status_code=404, detail="Room not found.")
+
+    cutoff = (datetime.utcnow() - timedelta(days=30)).isoformat()
+    recent_rows = await db.select(
+        "usage_records",
+        columns="id,user_id,appliance_id,hours,energy_kwh,created_at",
+        filters={"room_id": f"eq.{room_id}", "created_at": f"gte.{cutoff}"},
+        order="created_at.desc",
+        limit=5,
+    )
+    appliance_names = {
+        item["id"]: item["name"]
+        for item in await db.select("appliances", columns="id,name")
+    }
+    user_names = {
+        item["id"]: item["username"]
+        for item in await db.select("classroom_users", columns="id,username")
+    }
+    recent = [
+        {
+            "id": row.get("id"),
+            "username": user_names.get(row.get("user_id"), ""),
+            "appliance": appliance_names.get(row.get("appliance_id"), ""),
+            "hours": row.get("hours"),
+            "energy_kwh": row.get("energy_kwh"),
+            "created_at": row.get("created_at"),
+        }
+        for row in recent_rows
+    ]
+
+    average = room_usage[room_id]["kwh"]
+    building = building_average.get(room.get("building_code", ""), 0.0)
+    return {
+        **_room_row(room, room_usage[room_id], building, room_users[room_id]),
+        "building_average_kwh": round(building, 4),
+        "recent": recent,
+    }
+
+
+@app.put("/api/admin/rooms/{room_id}", dependencies=[Depends(require_admin)])
+async def update_admin_room(
+    room_id: int,
+    payload: RoomUpdateRequest,
+    db: SupabaseClient = Depends(get_db),
+) -> dict:
+    rooms = await db.select(
+        "classroom_rooms",
+        filters={"id": f"eq.{room_id}"},
+        limit=1,
+    )
+    if not rooms:
+        raise HTTPException(status_code=404, detail="Room not found.")
+    custom_type = (payload.custom_type or "").strip()
+    if payload.room_type == "custom" and len(custom_type) < 2:
+        raise HTTPException(status_code=422, detail="Enter a custom room type.")
+    updated = await db.update(
+        "classroom_rooms",
+        {
+            "room_type": payload.room_type,
+            "custom_type": custom_type if payload.room_type == "custom" else None,
+            "room_name": (payload.room_name or "").strip() or None,
+        },
+        {"id": f"eq.{room_id}"},
+    )
+    return _room_identity(updated[0] if updated else rooms[0])
+
+
+@app.post("/api/admin/sections", status_code=201, dependencies=[Depends(require_admin)])
+async def add_admin_section(
+    payload: SectionRequest,
+    db: SupabaseClient = Depends(get_db),
+) -> dict:
+    grade = payload.grade.strip()
+    section_name = " ".join(payload.section_name.split()).upper()
+    name = f"{grade} - {section_name}"
+    sections = await db.select("classroom_sections", columns="id,name")
+    if any(item.get("name", "").casefold() == name.casefold() for item in sections):
+        raise HTTPException(status_code=409, detail="That section already exists.")
+    try:
+        created = await db.insert(
+            "classroom_sections",
+            {"name": name, "grade": grade, "section_name": section_name},
+        )
+    except httpx.HTTPStatusError as error:
+        if error.response.status_code == 409:
+            raise HTTPException(
+                status_code=409, detail="That section already exists."
+            ) from error
+        raise
+    if not created:
+        raise HTTPException(status_code=500, detail="Section could not be created.")
+    return _section_dict(created[0])
+
+
+@app.delete("/api/admin/sections/{section_id}", dependencies=[Depends(require_admin)])
+async def delete_admin_section(
+    section_id: int,
+    db: SupabaseClient = Depends(get_db),
+) -> dict[str, str]:
+    sections = await db.select(
+        "classroom_sections",
+        columns="id",
+        filters={"id": f"eq.{section_id}"},
+        limit=1,
+    )
+    if not sections:
+        raise HTTPException(status_code=404, detail="Section not found.")
+    assigned = await db.select(
+        "classroom_users",
+        columns="id",
+        filters={"section_id": f"eq.{section_id}"},
+        limit=1,
+    )
+    if assigned:
+        raise HTTPException(
+            status_code=409,
+            detail="This section has assigned accounts and cannot be removed.",
+        )
+    has_records = await db.select(
+        "usage_records",
+        columns="id",
+        filters={"section_id": f"eq.{section_id}"},
+        limit=1,
+    )
+    if has_records:
+        raise HTTPException(
+            status_code=409,
+            detail="This section has usage records and cannot be removed.",
+        )
+    try:
+        await db.delete("classroom_sections", {"id": f"eq.{section_id}"})
+    except httpx.HTTPStatusError as error:
+        if error.response.status_code == 409:
+            raise HTTPException(
+                status_code=409,
+                detail="This section is still in use and cannot be removed.",
+            ) from error
+        raise
+    return {"status": "section removed"}
+
+
 @app.get("/api/admin/dashboard", dependencies=[Depends(require_admin)])
 async def admin_dashboard(
     month: str | None = None,
@@ -1507,123 +2058,168 @@ async def admin_dashboard(
     sections_offset = max(0, sections_offset)
 
     try:
-        # Fetch records for the month
+        # Fetch records from the start of the month, then apply the upper
+        # bound in Python. PostgREST filters are keyed by column, so a dict
+        # cannot carry both gte and lt for the same column.
         start_iso = start.isoformat()
-        end_iso = end.isoformat()
-        records = await db.select(
+        records = await _select_all(
+            db,
             "usage_records",
             columns="energy_kwh,section_id,user_id,created_at",
-            filters={"created_at": f"gte.{start_iso}", "created_at": f"lt.{end_iso}"}
+            filters={"created_at": f"gte.{start_iso}"},
+            order="created_at,id",
         )
-        
-        # Calculate section aggregates
+        month_records = []
+        for row in records:
+            moment = _parse_db_datetime(row.get("created_at"))
+            if moment is not None and moment < end:
+                month_records.append(row)
+        records = month_records
+
+        # Section catalog (all sections) powers the account/room selectors.
+        section_rows = await _select_all(
+            db,
+            "classroom_sections",
+            columns="id,name,grade,section_name",
+            order="name",
+        )
+        section_lookup = {section["id"]: section for section in section_rows}
+
+        # Calculate section aggregates.
         section_stats = {}
         total_kwh = 0.0
-        total_records = len(records)
-        
-        for r in records:
-            sid = r.get("section_id")
-            kwh = float(r.get("energy_kwh", 0))
+        for row in records:
+            sid = row.get("section_id")
+            kwh = float(row.get("energy_kwh") or 0)
             total_kwh += kwh
-            if sid not in section_stats:
-                section_stats[sid] = {"energy_kwh": 0.0, "records": 0}
-            section_stats[sid]["energy_kwh"] += kwh
-            section_stats[sid]["records"] += 1
-        
-        # Get section names
+            stats = section_stats.setdefault(sid, {"energy_kwh": 0.0, "records": 0})
+            stats["energy_kwh"] += kwh
+            stats["records"] += 1
+        total_records = len(records)
+
         sections_list = []
         for sid, stats in section_stats.items():
-            secs = await db.select("classroom_sections", columns="id,name", filters={"id": f"eq.{sid}"}, limit=1)
-            name = secs[0]["name"] if secs else f"Section {sid}"
+            section = section_lookup.get(sid)
             sections_list.append({
-                "name": name,
+                "name": section["name"] if section else f"Section {sid}",
                 "kwh": round(stats["energy_kwh"], 4),
                 "energy_kwh": round(stats["energy_kwh"], 4),
                 "records": stats["records"],
             })
-        
-        # Get all users with their info
+
+        # Get all users with their info.
         users_data = await db.select(
             "classroom_users",
             columns="id,username,status,last_seen,password_hash,section_id,assigned_room_id",
             order="last_seen.desc",
             limit=users_limit,
-            offset=users_offset
+            offset=users_offset,
         )
-        
-        # Get all rooms for assigned_room_id lookup
-        room_ids = {u.get("assigned_room_id") for u in users_data if u.get("assigned_room_id")}
+
+        # Get all rooms for assigned_room_id lookup.
+        room_ids = {
+            user.get("assigned_room_id")
+            for user in users_data
+            if user.get("assigned_room_id")
+        }
         rooms = {}
         if room_ids:
-            room_list = await db.select("classroom_rooms", filters={"id": f"in.({','.join(map(str, room_ids))})"})
-            rooms = {r["id"]: _room_identity(r) for r in room_list}
-        
-        # Count records per user
+            room_list = await db.select(
+                "classroom_rooms",
+                filters={"id": f"in.({','.join(map(str, room_ids))})"},
+            )
+            rooms = {room["id"]: _room_identity(room) for room in room_list}
+
+        # Count records per user.
         user_record_counts = {}
-        for r in records:
-            uid = r.get("user_id")
+        for row in records:
+            uid = row.get("user_id")
             user_record_counts[uid] = user_record_counts.get(uid, 0) + 1
-        
+
         users = []
-        for u in users_data:
+        for user in users_data:
+            section = section_lookup.get(user.get("section_id"))
+            record_count = user_record_counts.get(user.get("id"), 0)
             users.append({
-                "username": u.get("username"),
-                "status": u.get("status", "pending"),
-                "last_seen": u.get("last_seen"),
-                "has_password": u.get("password_hash") is not None,
-                "section_id": u.get("section_id"),
-                "assigned_room": rooms.get(u.get("assigned_room_id")),
-                "records_count": user_record_counts.get(u.get("id"), 0),
+                "username": user.get("username"),
+                "status": user.get("status", "pending"),
+                "last_seen": user.get("last_seen"),
+                "has_password": user.get("password_hash") is not None,
+                "credentials_set": user.get("password_hash") is not None,
+                "section_id": user.get("section_id"),
+                "section": _section_dict(section) if section else None,
+                "assigned_room": rooms.get(user.get("assigned_room_id")),
+                "records_count": record_count,
+                "records": record_count,
             })
-        
-        # Get sections list with record counts
+
+        # Paginated section list with record counts.
         all_sections = await db.select(
             "classroom_sections",
             columns="id,name",
             order="name",
             limit=sections_limit,
-            offset=sections_offset
+            offset=sections_offset,
         )
 
         # Summary counts for the overview cards.
         rooms_count = len(await db.select("classroom_rooms", columns="id"))
+        users_total = len(await db.select("classroom_users", columns="id"))
+        pending_count = len(
+            await db.select(
+                "classroom_users",
+                columns="id",
+                filters={"status": "eq.pending"},
+            )
+        )
         appliances = await db.select(
             "appliances",
             columns="id,name,wattage,quantity",
             order="name",
         )
-        
-        # Count records per section
+
+        # Count records per section.
         section_record_counts = {}
-        for r in records:
-            sid = r.get("section_id")
+        for row in records:
+            sid = row.get("section_id")
             section_record_counts[sid] = section_record_counts.get(sid, 0) + 1
-        
+
         sections_list_full = []
-        for s in all_sections:
+        for section in all_sections:
             sections_list_full.append({
-                "id": s["id"],
-                "name": s["name"],
-                "records": section_record_counts.get(s["id"], 0),
+                "id": section["id"],
+                "name": section["name"],
+                "records": section_record_counts.get(section["id"], 0),
             })
-        
-        # Get monthly data for the last 6 months
-        monthly_data = []
+
+        # Six-month trend, bucketed from one bounded read.
+        month_starts = []
         for i in range(6):
-            m_start = (now.replace(day=1) - timedelta(days=32 * i)).replace(day=1)
-            m_end = (m_start.replace(day=28) + timedelta(days=4)).replace(day=1)
-            m_records = await db.select(
-                "usage_records",
-                columns="energy_kwh",
-                filters={"created_at": f"gte.{m_start.isoformat()}", "created_at": f"lt.{m_end.isoformat()}"}
-            )
-            m_kwh = sum(float(r.get("energy_kwh", 0)) for r in m_records)
-            monthly_data.append({
-                "month": m_start.strftime("%Y-%m"),
-                "kwh": round(m_kwh, 4)
-            })
-        monthly_data.reverse()  # oldest to newest
-        
+            month_start = (now.replace(day=1) - timedelta(days=32 * i)).replace(day=1)
+            month_starts.append(month_start)
+        month_starts.reverse()  # oldest to newest
+        trend_rows = await _select_all(
+            db,
+            "usage_records",
+            columns="energy_kwh,created_at",
+            filters={"created_at": f"gte.{month_starts[0].isoformat()}"},
+            order="created_at,id",
+        )
+        monthly_totals = {
+            month_start.strftime("%Y-%m"): 0.0 for month_start in month_starts
+        }
+        for row in trend_rows:
+            moment = _parse_db_datetime(row.get("created_at"))
+            if moment is None:
+                continue
+            key = moment.strftime("%Y-%m")
+            if key in monthly_totals:
+                monthly_totals[key] += float(row.get("energy_kwh") or 0)
+        monthly_data = [
+            {"month": key, "kwh": round(value, 4)}
+            for key, value in monthly_totals.items()
+        ]
+
         return {
             "month": month,
             "total_kwh": round(total_kwh, 4),
@@ -1631,10 +2227,13 @@ async def admin_dashboard(
             "sections": sections_list,
             "users": users,
             "sections_list": sections_list_full,
+            "sections_catalog": [_section_dict(section) for section in section_rows],
+            "users_total": users_total,
+            "pending_count": pending_count,
             "rate_php_per_kwh": ELECTRICITY_RATE,
             "monthly": monthly_data,
             "rooms_count": rooms_count,
-            "section_count": len(all_sections),
+            "section_count": len(section_rows),
             "appliances": appliances,
             "record_count": total_records,
         }
