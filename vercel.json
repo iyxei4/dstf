@@ -13,9 +13,6 @@
       "entrypoint": "app.main:app"
     }
   },
-  "redirects": [
-    { "source": "/", "destination": "/mcs", "permanent": false }
-  ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": { "service": "api" } },
     { "source": "/(.*)", "destination": { "service": "web" } }

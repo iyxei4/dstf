@@ -85,7 +85,7 @@ export function AdminOverview({ dashboard, month, activeAccounts, inactiveAccoun
         <div className="consolidated-grid">
           <div className="consolidated-item is-total">
             <span>TOTAL ACCOUNTS</span>
-            <strong>{dashboard?.users?.length || 0}</strong>
+            <strong>{dashboard?.users_total ?? (dashboard?.users?.length || 0)}</strong>
           </div>
           <div className="consolidated-item">
             <span>Classrooms</span>

@@ -1,4 +1,4 @@
-import { Zap, Power } from "lucide-react";
+import { Zap } from "lucide-react";
 import { formatElapsed } from "../../utils/formatters";
 
 export function ApplianceRow({
@@ -53,14 +53,19 @@ export function ApplianceRow({
         <span className="appliance-actions">
           <button
             type="button"
-            className={`power-toggle${isRunning ? " is-on" : ""}`}
-            aria-pressed={isRunning}
-            disabled={
-              busy || (!isRunning && !roomId)
-            }
+            className={`power-switch${isRunning ? " is-on" : ""}`}
+            role="switch"
+            aria-checked={isRunning}
+            aria-label={`${appliance.name}: turn ${isRunning ? "off" : "on"}`}
+            disabled={busy || (!isRunning && !roomId)}
             onClick={() => (isRunning ? onStop(appliance) : onStart(appliance))}
           >
-            <Power size={15} /> {isRunning ? "OFF" : "ON"}
+            <span className="power-switch-track" aria-hidden="true">
+              <span className="power-switch-knob" />
+            </span>
+            <span className="power-switch-label">
+              {isRunning ? "ON" : "OFF"}
+            </span>
           </button>
         </span>
       </td>

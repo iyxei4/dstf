@@ -1,58 +1,140 @@
-import { Users, ShieldCheck } from "lucide-react";
+import { ArrowRight, History, ShieldCheck, Users } from "lucide-react";
 import { useTheme } from "../hooks/useTheme";
 import { Topbar } from "../components/ui/Topbar";
 import { ThemeToggle } from "../components/ui/ThemeToggle";
 import { PageFooter } from "../components/ui/PageFooter";
 import { RoleCard } from "../components/ui/RoleCard";
+import { BuildingIllustration } from "../components/landing/BuildingIllustration";
 
 export function RoleChoice() {
   const { darkMode, toggleTheme } = useTheme();
 
   return (
-    <main className="role-page animate-in">
+    <main className="role-page access-page">
       <Topbar
-        subtitle="POWER CONSUMPTION MONITOR"
+        subtitle="WATTWISE ACCESS HUB"
         right={<ThemeToggle darkMode={darkMode} onToggle={toggleTheme} />}
       />
-      <section className="role-intro">
-        <div className="eyebrow">
-          <span className="eyebrow-dot" /> CLASSROOM ENERGY, IN FOCUS
+
+      <section className="access-hero access-hero--hub">
+        <div className="access-intro">
+          <div className="eyebrow">
+            <span className="eyebrow-dot" /> SELECT ACCESS
+          </div>
+          <h1>
+            Choose your
+            <br />
+            <em>console.</em>
+          </h1>
+          <p>
+            Owners manage the campus and its coordinators. EMCs report appliance
+            activity for the single room assigned to them.
+          </p>
+
+          <div className="access-route" aria-label="Access model">
+            <span>
+              <b>01</b> Owner workspace
+            </span>
+            <span className="access-route-arrow">
+              <ArrowRight size={14} />
+            </span>
+            <span>
+              <b>02</b> EMC room
+            </span>
+          </div>
+
+          <div className="access-trust">
+            <span>
+              <ShieldCheck size={15} />
+              Room-scoped access
+            </span>
+            <span>
+              <History size={15} />
+              Report history preserved
+            </span>
+            <span>
+              <Users size={15} />
+              Two distinct roles
+            </span>
+          </div>
         </div>
-        <h1>
-          Every room has
-          <br />a <em>power story.</em>
-        </h1>
-        <p>
-          Choose your workspace to track classroom electricity use and make
-          every kilowatt-hour count.
-        </p>
+
+        <aside className="access-map" aria-label="Workspace access model">
+          <div className="access-map-head">
+            <span>ACCESS MODEL</span>
+            <span>WATTWISE / 01</span>
+          </div>
+
+          <div className="access-map-art" aria-hidden="true">
+            <BuildingIllustration />
+          </div>
+
+          <div className="access-map-row">
+            <span className="access-map-icon">
+              <ShieldCheck size={17} />
+            </span>
+            <span className="access-map-copy">
+              <strong>Owner</strong>
+              <small>Buildings, rooms, EMCs, reports</small>
+            </span>
+            <span className="access-map-tag">FULL</span>
+          </div>
+          <div className="access-map-row">
+            <span className="access-map-icon">
+              <Users size={17} />
+            </span>
+            <span className="access-map-copy">
+              <strong>EMC</strong>
+              <small>One assigned room and its appliances</small>
+            </span>
+            <span className="access-map-tag">SCOPED</span>
+          </div>
+        </aside>
       </section>
-      <section className="role-grid" aria-label="Choose your workspace">
+
+      <div className="access-section-head">
+        <span className="ww-eyebrow">Access portals</span>
+        <p>Select the console that matches your account.</p>
+      </div>
+
+      <section
+        className="role-grid access-grid"
+        aria-label="Choose your access portal"
+      >
         <RoleCard
-          title="User workspace"
-          description="Log appliance run time, record classroom activity, and see your energy estimates."
-          icon={<Users size={20} />}
-          eyebrow="FOR TEACHERS & STAFF"
-          href="/mcs/user"
+          title="Owner console"
+          description="Structure the workspace, maintain appliances, manage EMC access, and review reported activity."
+          icon={<ShieldCheck size={21} />}
+          eyebrow="FOR WORKSPACE OWNERS"
+          href="/admin"
+          tone="owner"
+          details={[
+            "Buildings, floors, and rooms",
+            "Appliance catalog and reports",
+            "EMC access management",
+          ]}
+          cta="Sign in as owner"
         />
         <RoleCard
-          title="Admin console"
-          description="Review submissions, compare classroom usage, and maintain the appliance catalog."
-          icon={<ShieldCheck size={20} />}
-          eyebrow="FOR SYSTEM MANAGERS"
-          href="/mcs/admin"
-          color="admin"
+          title="EMC workspace"
+          description="Open your assigned room, submit reported ON/OFF status, and review the activity you have reported."
+          icon={<Users size={21} />}
+          eyebrow="FOR ENERGY MANAGEMENT COORDINATORS"
+          href="/user"
+          details={[
+            "One assigned room",
+            "Reported ON/OFF status",
+            "Your reporting history",
+          ]}
+          cta="Sign in as EMC"
         />
       </section>
-      <section className="role-about">
-        <span className="eyebrow">ABOUT WATTWISE</span>
-        <p>
-          WattWise Classrooms turns appliance run time into estimated energy
-          use — watts × hours ÷ 1000 — so teachers can log what they switch on
-          and managers can see which rooms use the most. All figures are
-          estimates, not meter readings.
-        </p>
-      </section>
+
+      <p className="access-note">
+        Access follows your role. Owners manage the workspace and its EMC
+        accounts; each EMC account is limited to its assigned room.
+      </p>
+
       <PageFooter
         showPrivacy
         onPrivacyClick={() => window.dispatchEvent(new CustomEvent("open-privacy"))}

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Cookie, Shield, Check, X, Settings, Clock } from "lucide-react";
 
-const COOKIE_CATEGORIES = [
+const cookie = [
   {
     id: "essential",
     name: "Essential",
@@ -78,7 +78,7 @@ export function CookieConsent() {
   };
 
   const acceptAll = () => {
-    const allEnabled = COOKIE_CATEGORIES.reduce((acc, cat) => ({ ...acc, [cat.id]: true }), {});
+    const allEnabled = cookie.reduce((acc, cat) => ({ ...acc, [cat.id]: true }), {});
     saveConsent(allEnabled);
   };
 
@@ -142,7 +142,7 @@ export function CookieConsent() {
               </button>
             </div>
             <div className="modal-body cookie-modal-body">
-              {COOKIE_CATEGORIES.map((category) => (
+              {cookie.map((category) => (
                 <div key={category.id} className="cookie-category">
                   <div className="cookie-category-header">
                     <div className="cookie-category-info">

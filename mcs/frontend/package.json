@@ -9,12 +9,17 @@
     "lint": "oxlint src"
   },
   "dependencies": {
+    "@react-three/drei": "^10.0.0",
+    "@react-three/fiber": "^9.0.0",
     "@supabase/supabase-js": "^2.117.2",
+    "framer-motion": "^11.11.17",
+    "gsap": "^3.12.7",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.18.4",
-    "recharts": "^2.15.0"
+    "recharts": "^2.15.0",
+    "three": "^0.172.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",

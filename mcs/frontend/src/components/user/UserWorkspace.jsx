@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Settings, LogOut, Clock3 } from "lucide-react";
-import { request } from "../../utils/api";
+import { request, invalidateCache } from "../../utils/api";
 import { APPLIANCE_PRESETS, MAX_HOURS } from "../../constants";
 import {
   connectedWattsOf,
@@ -162,6 +162,7 @@ export function UserWorkspace({ onSignOut }) {
         method: "POST",
         body: JSON.stringify({ name: preset.name, wattage: preset.watts }),
       });
+      invalidateCache("/appliances");
       setAppliances((current) =>
         [...current, created].sort((a, b) => a.name.localeCompare(b.name)),
       );
@@ -187,6 +188,7 @@ export function UserWorkspace({ onSignOut }) {
           quantity: patch.quantity ?? (appliance.quantity || 1),
         }),
       });
+      invalidateCache("/appliances");
       setAppliances((current) =>
         current
           .map((item) => (item.id === updated.id ? updated : item))
@@ -216,6 +218,7 @@ export function UserWorkspace({ onSignOut }) {
     setSuccess("");
     try {
       await request(`/appliances/${appliance.id}`, { method: "DELETE" });
+      invalidateCache("/appliances");
       setAppliances((current) =>
         current.filter((item) => item.id !== appliance.id),
       );

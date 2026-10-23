@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { LogOut, Menu } from "lucide-react";
-import { request } from "../../utils/api";
+import { request, invalidateCache } from "../../utils/api";
 import { useTheme } from "../../hooks/useTheme";
 import { useLiveTables } from "../../hooks/useLiveTables";
 import { Topbar } from "../ui/Topbar";
@@ -58,7 +58,11 @@ export function AdminWorkspace({ onSignOut }) {
   const [credentialsMessage, setCredentialsMessage] = useState("");
 
   async function loadDashboard(selectedMonth = month) {
-    const data = await request(`/admin/dashboard?month=${selectedMonth}`);
+    // The accounts table lists every account, so ask for the full roster
+    // rather than the default first page.
+    const data = await request(
+      `/admin/dashboard?month=${selectedMonth}&users_limit=200`,
+    );
     setDashboard(data);
   }
 
@@ -95,6 +99,9 @@ export function AdminWorkspace({ onSignOut }) {
     (user) => user.status === "pending",
   );
   const allAccounts = dashboard?.users || [];
+  // The server reports the true totals, so the counts stay right even if
+  // the account list is ever paged.
+  const totalPending = dashboard?.pending_count ?? pendingUsers.length;
   const activeAccounts = allAccounts.filter(
     (user) => user.status === "active",
   ).length;
@@ -164,6 +171,7 @@ export function AdminWorkspace({ onSignOut }) {
           section_name: sectionName,
         }),
       });
+      invalidateCache("/sections");
       setSectionName("");
       await loadDashboard();
       setSuccess(`${created.name} added to the section list.`);
@@ -177,6 +185,7 @@ export function AdminWorkspace({ onSignOut }) {
     setNotice("");
     try {
       await request(`/admin/sections/${section.id}`, { method: "DELETE" });
+      invalidateCache("/sections");
       await loadDashboard();
     } catch (error) {
       setNotice(error.message);
@@ -195,6 +204,7 @@ export function AdminWorkspace({ onSignOut }) {
         editingId ? `/admin/appliances/${editingId}` : "/admin/appliances",
         { method: editingId ? "PUT" : "POST", body: payload },
       );
+      invalidateCache("/appliances");
       setApplianceName("");
       setApplianceWatts(100);
       setEditingId(null);
@@ -217,6 +227,7 @@ export function AdminWorkspace({ onSignOut }) {
       const result = await request(`/admin/appliances/${appliance.id}`, {
         method: "DELETE",
       });
+      invalidateCache("/appliances");
       if (editingId === appliance.id) {
         setEditingId(null);
         setApplianceName("");
@@ -379,7 +390,7 @@ export function AdminWorkspace({ onSignOut }) {
           open={navOpen}
           tab={tab}
           setTab={setTab}
-          pendingCount={pendingUsers.length}
+          pendingCount={totalPending}
           admin={admin}
           onReportsClick={() => loadReports().catch((error) => setNotice(error.message))}
           onClose={() => setNavOpen(false)}
@@ -432,7 +443,7 @@ export function AdminWorkspace({ onSignOut }) {
                   month={month}
                   activeAccounts={activeAccounts}
                   inactiveAccounts={inactiveAccounts}
-                  pendingCount={pendingUsers.length}
+                  pendingCount={totalPending}
                 />
               )}
               {tab === "reports" && (
