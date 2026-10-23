@@ -24,6 +24,7 @@ const navLinks = [
   { label: "Home", href: "/" },
   { label: "Features", href: "#features" },
   { label: "How It Works", href: "#how-it-works" },
+  { label: "Walkthrough", href: "/interactive" },
   { label: "About", href: "#about" },
 ];
 
@@ -160,7 +161,7 @@ export function PublicLandingPage() {
               <Link to="/auth" className="ds-btn ds-btn--ghost ds-btn--sm">
                 Sign in
               </Link>
-              <Link to="/auth/signup" className="ds-btn ds-btn--primary ds-btn--sm">
+              <Link to="/signup" className="ds-btn ds-btn--primary ds-btn--sm">
                 Get started
                 <ArrowUpRight size={14} />
               </Link>
@@ -202,7 +203,7 @@ export function PublicLandingPage() {
               energy reporting platform.
             </p>
             <div className={`lp-ctas lp-animate lp-animate--fade-up ${heroVisible ? "is-visible" : ""} lp-stagger-4`}>
-              <Link to="/auth/signup" className="ds-btn ds-btn--primary ds-btn--lg">
+              <Link to="/signup" className="ds-btn ds-btn--primary ds-btn--lg">
                 Get started
                 <ArrowUpRight size={16} />
               </Link>

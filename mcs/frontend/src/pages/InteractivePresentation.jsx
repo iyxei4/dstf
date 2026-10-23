@@ -1,761 +1,1025 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowRight,
-  ArrowLeft,
-  ChevronRight,
-  ChevronLeft,
-  Zap,
-  Building2,
-  Users,
-  Monitor,
   Calculator,
-  ShieldCheck,
-  History,
-  PlugZap,
-  Gauge,
-  BarChart3,
-  BellRing,
-  Sparkles,
-  CheckCircle,
-  XCircle,
-  Clock,
-  Layers,
-  LayoutDashboard,
-  MousePointer,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
   Keyboard,
+  Maximize2,
+  Minimize2,
+  MonitorSmartphone,
+  MousePointer2,
   Play,
-  Pause,
-  Volume2,
-  Fullscreen,
-  Minimize,
+  Sparkles,
+  X,
 } from "lucide-react";
 import { Topbar } from "../components/ui/Topbar";
 import { ThemeToggle } from "../components/ui/ThemeToggle";
 import { PageFooter } from "../components/ui/PageFooter";
 import { useTheme } from "../hooks/useTheme";
-import { useScrollAnimation, useStaggeredAnimation } from "../hooks/useScrollAnimation";
-import { Card, CardBody } from "../components/design";
 
-const PRESENTERS = {
-  Wackeen: { name: "Emilyan Wackeen M. Samedra", color: "#e9bd68", icon: Zap },
-  Viencei: { name: "Viencei R. Antonio", color: "#79bd91", icon: Building2 },
-  Leo: { name: "Leo Victor R. Santiago", color: "#8bb5c5", icon: Users },
+const DEMO_SOURCES = {
+  landing: "/",
+  signup: "/signup",
+  admin: "/mcs/admin/dashboard",
+  user: "/mcs/user",
 };
 
+const DEMO_LABELS = {
+  landing: "Public site",
+  signup: "Sign up",
+  admin: "Admin console",
+  user: "EMC workspace",
+};
+
+const ADMIN_CREDENTIALS = { username: "admin", password: "mcs2026" };
+
+function isLocalPreview() {
+  const host = window.location.hostname;
+  return (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    /^\d{1,3}(\.\d{1,3}){3}$/.test(host)
+  );
+}
+
+function emcCredentials() {
+  return isLocalPreview()
+    ? { username: "bernoulli", password: "medsci" }
+    : { username: "dstf", password: "mcs2026" };
+}
+
+const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+function frameDocument(refs, key) {
+  try {
+    const doc = refs.current[key]?.contentDocument;
+    if (!doc || doc.readyState === "loading") return null;
+    return doc;
+  } catch {
+    return null;
+  }
+}
+
+function waitForElement(refs, key, selector, isCurrent, timeout = 20000) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    const check = () => {
+      if (!isCurrent()) {
+        resolve(null);
+        return;
+      }
+      const element = frameDocument(refs, key)?.querySelector(selector);
+      if (element) {
+        resolve(element);
+        return;
+      }
+      if (Date.now() - startedAt > timeout) {
+        resolve(null);
+        return;
+      }
+      window.setTimeout(check, 120);
+    };
+    check();
+  });
+}
+
+function typeInto(element, text, isCurrent, delay = 42) {
+  const frameWindow = element.ownerDocument.defaultView;
+  const descriptor = Object.getOwnPropertyDescriptor(
+    frameWindow.HTMLInputElement.prototype,
+    "value",
+  );
+  const setValue = (value) => {
+    if (descriptor?.set) descriptor.set.call(element, value);
+    else element.value = value;
+    element.dispatchEvent(new frameWindow.Event("input", { bubbles: true }));
+  };
+
+  if (window.matchMedia("(pointer: fine)").matches) {
+    element.focus({ preventScroll: true });
+  }
+  setValue("");
+
+  return new Promise((resolve) => {
+    let index = 0;
+    const step = () => {
+      if (!isCurrent()) {
+        resolve(false);
+        return;
+      }
+      index += 1;
+      setValue(text.slice(0, index));
+      if (index >= text.length) {
+        resolve(true);
+        return;
+      }
+      window.setTimeout(step, delay);
+    };
+    step();
+  });
+}
+
+function submitAuthForm(doc) {
+  const form = doc.querySelector("form.auth-form");
+  if (!form) return false;
+  const button =
+    form.querySelector("button[type='submit']") || form.querySelector("button");
+  if (button) {
+    button.click();
+    return true;
+  }
+  if (form.requestSubmit) {
+    form.requestSubmit();
+    return true;
+  }
+  return false;
+}
+
+function clickAdminNav(doc, label) {
+  const links = [...doc.querySelectorAll(".admin-nav .nav-link")];
+  const target = links.find((link) =>
+    link.textContent.trim().startsWith(label),
+  );
+  if (!target) return false;
+  target.click();
+  return true;
+}
+
+async function runSignupDemo({ refs, isCurrent, markDone }) {
+  const confirmInput = await waitForElement(
+    refs,
+    "signup",
+    "form.auth-form #confirm-password",
+    isCurrent,
+  );
+  if (!confirmInput) return;
+  const form = confirmInput.closest("form");
+  if (!form) return;
+
+  const suffix = Date.now().toString(36);
+  const fields = [
+    ["#username", `walkthrough${suffix}`],
+    ["#campus-name", "CSHS"],
+    ["#email", `walkthrough${suffix}@wattwise.demo`],
+    ["#password", "mcs2026demo"],
+    ["#confirm-password", "mcs2026demo"],
+  ];
+
+  for (const [selector, value] of fields) {
+    if (!isCurrent()) return;
+    const input = form.querySelector(selector);
+    if (!input) return;
+    input.scrollIntoView({ behavior: "smooth", block: "center" });
+    const typed = await typeInto(input, value, isCurrent);
+    if (!typed) return;
+    await wait(110);
+  }
+
+  await wait(260);
+  if (!isCurrent()) return;
+  if (submitAuthForm(form.ownerDocument)) markDone();
+}
+
+async function runAdminDemo({ refs, isCurrent, markDone }) {
+  const first = await waitForElement(
+    refs,
+    "admin",
+    ".admin-page .admin-nav, form.auth-form",
+    isCurrent,
+    25000,
+  );
+  if (!first) return;
+
+  if (!frameDocument(refs, "admin")?.querySelector(".admin-page")) {
+    const form = first.closest("form");
+    const username = form?.querySelector("input[autocomplete='username']");
+    const password = form?.querySelector("input[autocomplete='current-password']");
+    if (!form || !username || !password) return;
+
+    if (!(await typeInto(username, ADMIN_CREDENTIALS.username, isCurrent))) return;
+    await wait(120);
+    if (!(await typeInto(password, ADMIN_CREDENTIALS.password, isCurrent))) return;
+    await wait(260);
+    if (!isCurrent()) return;
+    submitAuthForm(form.ownerDocument);
+  }
+
+  const nav = await waitForElement(
+    refs,
+    "admin",
+    ".admin-page .admin-nav",
+    isCurrent,
+    30000,
+  );
+  if (!nav) return;
+  markDone();
+
+  await wait(1500);
+  const tour = ["Reports", "Buildings & rooms", "Users & facilities", "Overview"];
+  for (let index = 0; index < tour.length; index += 1) {
+    if (!isCurrent()) return;
+    clickAdminNav(nav.ownerDocument, tour[index]);
+    if (index < tour.length - 1) await wait(3200);
+  }
+}
+
+async function runEmcDemo({ refs, isCurrent, markDone }) {
+  const first = await waitForElement(
+    refs,
+    "user",
+    ".workspace-page, form.auth-form",
+    isCurrent,
+    25000,
+  );
+  if (!first) return;
+
+  const doc = frameDocument(refs, "user");
+  if (doc?.querySelector("form.auth-form")) {
+    const form = doc.querySelector("form.auth-form");
+    const username = form.querySelector("input[autocomplete='username']");
+    const password = form.querySelector("input[autocomplete='current-password']");
+    if (!username || !password) return;
+
+    const credentials = emcCredentials();
+    if (!(await typeInto(username, credentials.username, isCurrent))) return;
+    await wait(120);
+    if (!(await typeInto(password, credentials.password, isCurrent))) return;
+    await wait(260);
+    if (!isCurrent()) return;
+    submitAuthForm(doc);
+  }
+
+  const panel = await waitForElement(
+    refs,
+    "user",
+    ".appliance-list-panel",
+    isCurrent,
+    30000,
+  );
+  if (!panel) return;
+
+  await wait(700);
+  if (!isCurrent()) return;
+  const table =
+    frameDocument(refs, "user")?.querySelector(".appliance-table") || panel;
+  table.scrollIntoView({ behavior: "smooth", block: "start" });
+  await wait(1100);
+
+  const firstSwitch = await waitForElement(
+    refs,
+    "user",
+    ".power-switch[aria-checked='false']:not(:disabled)",
+    isCurrent,
+    12000,
+  );
+  if (!firstSwitch) {
+    frameDocument(refs, "user")
+      ?.querySelector(".appliance-table")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    markDone();
+    return;
+  }
+
+  for (let index = 0; index < 30; index += 1) {
+    if (!isCurrent()) return;
+    const currentDoc = frameDocument(refs, "user");
+    const powerSwitch = currentDoc?.querySelector(
+      ".power-switch[aria-checked='false']:not(:disabled)",
+    );
+    if (!powerSwitch) break;
+    powerSwitch.click();
+    await wait(480);
+  }
+
+  await wait(300);
+  if (!isCurrent()) return;
+  frameDocument(refs, "user")
+    ?.querySelector(".appliance-table")
+    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  markDone();
+}
+
+const SLIDE_AUTOMATION = {
+  signup: runSignupDemo,
+  admin: runAdminDemo,
+  "emc-login": runEmcDemo,
+};
+
+// Short cues only. The presenter script stays outside this page.
 const SLIDES = [
   {
     id: "title",
+    kind: "title",
+    eyebrow: "INTERACTIVE WALKTHROUGH",
     title: "WATTWISE",
-    subtitle: "Smart Web-Based Electricity Consumption Simulator and Management System",
-    presenters: ["Wackeen", "Viencei", "Leo"],
-    type: "title",
+    subtitle: "Classroom energy, made visible.",
+    lead: "A live walkthrough of the reporting workspace — not a slideshow of mockups.",
   },
   {
     id: "problem",
-    title: "The Problem",
-    presenter: "Viencei",
-    content: [
-      "Panel members, may we invite you to take these phones?",
-      "Let's start with a simple question: Do we really know how much electricity our school consumes every day?",
-      "Fans, televisions, lights, printers, and computers run for hours, but their energy usage often goes untracked.",
-      "Without a simple monitoring system, schools have limited visibility into consumption patterns and fewer opportunities to make smarter energy decisions.",
-      "That is the problem we set out to solve.",
+    kind: "content",
+    kicker: "01 · THE GAP",
+    title: "Everyday devices. Invisible costs.",
+    cues: [
+      "Fans, lights, screens, printers",
+      "Hours of use go untracked",
+      "No shared view of the campus",
     ],
-    type: "content",
+    note: "Open with a simple question about today's electricity use.",
   },
   {
     id: "intro",
-    title: "Introducing WattWise",
-    presenter: "Wackeen",
-    content: [
-      "Today, we won't just tell you what WattWise can do. We're inviting you to experience it.",
-      "We want you to experience how our system works from the user's perspective. Feel free to explore the website as we walk you through its key features.",
-      "Each facility has a designated Energy Management Coordinator (EMC) responsible for entering the necessary data into the system.",
-      "If the coordinator forgets to activate the switch on the website at the appropriate time, the system allows them to manually specify a custom date and time to ensure that the recorded data accurately reflects the facility's electricity usage.",
+    kind: "demo",
+    kicker: "02 · THE SYSTEM",
+    title: "A working system, not a mockup.",
+    cues: [
+      "One coordinator per room",
+      "Custom date and time correction",
+      "Explore the live app",
     ],
-    type: "content",
+    demo: "landing",
+    demoHint: "Open the public site, then move into the reporting flow.",
   },
   {
     id: "signup",
-    title: "Sign Up & Sign In",
-    presenter: "Leo",
-    content: [
-      "First, users register and access their assigned classroom after administrator approval. Administrators can manage users, facilities, and equipment through a dedicated interface.",
-      "Next, users record the equipment in their facility, including each equipment's power rating, operating status, and duration of use.",
+    kind: "demo",
+    kicker: "03 · ACCESS",
+    title: "From sign-up to assigned room.",
+    cues: [
+      "Register an account",
+      "Admin approves access",
+      "Room-scoped sign-in",
     ],
-    screenshot: "signup",
-    type: "demo",
+    demo: "signup",
+    demoHint: "The form fills itself, then creates a pending account.",
   },
   {
     id: "formula",
-    title: "The Formula",
-    presenter: "Leo",
-    content: [
-      "Let's take a quick example: a 100-watt television operating for four hours.",
-      "WattWise applies a simple formula:",
-      "Energy Consumption = Power × Time ÷ 1,000",
-      "So, 100 watts × 4 hours ÷ 1,000 = 0.4 kilowatt-hours.",
-    ],
+    kind: "formula",
+    kicker: "04 · THE MATH",
+    title: "The estimate, in one line.",
+    cues: ["Power × time ÷ 1,000", "An estimate, not a meter reading"],
     formula: { power: 100, time: 4, result: 0.4 },
-    type: "formula",
   },
   {
-    id: "admin-workspace",
-    title: "Admin Workspace",
-    presenter: "Wackeen",
-    content: [
-      "Administrators manage buildings, rooms, appliances, and EMC accounts from a centralized dashboard.",
-      "Buildings & Rooms: Create buildings, add floors, and define rooms to match your real campus layout.",
-      "Appliances: Give every appliance a name and rated wattage so its load is known and tracked.",
-      "EMC Accounts: Invite coordinators, assign them to rooms, and revoke access when terms end.",
-      "Reports & Analytics: Filter by month, building, room, coordinator, or appliance for insights.",
+    id: "admin",
+    kind: "demo",
+    kicker: "05 · ADMIN",
+    title: "One console for the whole campus.",
+    cues: [
+      "Buildings and rooms",
+      "Appliance wattage",
+      "Accounts and access",
+      "Reports and analytics",
     ],
-    screenshot: "admin",
-    type: "demo",
+    demo: "admin",
+    demoHint: "The console signs in and tours its main sections.",
   },
   {
-    id: "monitoring-reports",
-    title: "Monitoring Reports",
-    presenter: "Viencei",
-    content: [
-      "The system applies the energy calculation to every recorded equipment and organizes the results into consumption records, summaries, and reports.",
-      "Users can view room-level totals, historical usage, trends, and high-use flags that highlight records requiring attention.",
-      "In just a few steps, WattWise transforms raw equipment information into clear, actionable energy insights.",
+    id: "reports",
+    kind: "demo",
+    kicker: "06 · REPORTS",
+    title: "From records to trends.",
+    cues: [
+      "Filter by month and room",
+      "Compare appliance use",
+      "Spot peak periods",
     ],
-    screenshot: "reports",
-    type: "demo",
+    demo: "admin",
+    demoHint: "The Reports tab is already open in the demo.",
   },
   {
-    id: "adding-buildings",
-    title: "Adding Buildings & Rooms",
-    presenter: "Viencei",
-    content: [
-      "Structure your workspace: Name your workspace, add buildings and floors, then create the rooms inside them.",
-      "Each room can be assigned a type (classroom, office, custom) and given a custom name.",
-      "The visual campus map lets you see your entire facility hierarchy at a glance.",
+    id: "buildings",
+    kind: "demo",
+    kicker: "07 · STRUCTURE",
+    title: "Model the real campus.",
+    cues: [
+      "Building → floor → room",
+      "Room types and names",
+      "Visual room map",
     ],
-    screenshot: "buildings",
-    type: "demo",
+    demo: "admin",
+    demoHint: "Buildings & rooms follows in the same console.",
   },
   {
     id: "emc-login",
-    title: "EMC Login & Workspace",
-    presenter: "Leo",
-    content: [
-      "Each facility has a designated Energy Management Coordinator (EMC) responsible for entering the necessary data into the system.",
-      "EMCs sign in with their assigned credentials and only see the room they are assigned to — room-scoped access ensures focus and accountability.",
-      "The EMC workspace shows their assigned room, available appliances, and their report history.",
+    kind: "demo",
+    kicker: "08 · EMC",
+    title: "A workspace with one room.",
+    cues: [
+      "One assigned room",
+      "Room-scoped access",
+      "Recent submissions",
     ],
-    screenshot: "emc-login",
-    type: "demo",
+    demo: "user",
+    demoHint: "The demo signs in, finds the appliances, and turns them on.",
   },
   {
-    id: "emc-on-off",
-    title: "EMC ON/OFF Reporting",
-    presenter: "Leo",
-    content: [
-      "Coordinators submit ON/OFF reports by selecting an appliance, entering hours of use, and submitting.",
-      "If the coordinator forgets to activate the switch at the appropriate time, they can manually specify a custom date and time.",
-      "Reports are observations, not live sensor readings. No report means the status is unknown, not OFF.",
-      "Each submission calculates energy: Power (watts) × Hours ÷ 1,000 = kWh",
+    id: "emc-reporting",
+    kind: "demo",
+    kicker: "09 · REPORTING",
+    title: "Report an observation.",
+    cues: [
+      "ON / OFF",
+      "Hours or a custom time",
+      "No report means unknown",
     ],
-    screenshot: "emc-reporting",
-    type: "demo",
+    demo: "user",
+    demoHint: "Submit a report and watch the estimate and history update.",
   },
   {
-    id: "tech-stack",
-    title: "Technical Stack",
-    presenter: "Wackeen",
-    content: [
-      "Behind the interface is a practical stack designed for reliability and stability:",
-      "React for the user interface",
-      "Python (FastAPI) for the backend",
-      "Supabase (PostgreSQL) for the database",
-      "Vercel for web hosting",
-      "It organizes data about classrooms, facilities, users, equipment, and energy usage.",
-      "Most importantly, WattWise helps schools monitor energy consumption, identify usage patterns, and encourage responsible use of appliances.",
+    id: "stack",
+    kind: "stack",
+    kicker: "10 · UNDER THE HOOD",
+    title: "A small, practical stack.",
+    cues: [
+      "One React frontend",
+      "FastAPI on Vercel",
+      "Supabase for records",
     ],
-    type: "content",
+    tech: ["React", "FastAPI", "Supabase", "Vercel"],
   },
   {
     id: "future",
-    title: "Future Vision",
-    presenter: "Leo",
-    content: [
-      "This is only the beginning.",
-      "WattWise can scale by expanding to more classrooms, collecting data over longer periods, and incorporating factors such as occupancy, schedules, and real-time measurements.",
-      "Future validation using independently measured electricity consumption can further strengthen the system's prediction capabilities.",
-      "Our vision is to help schools move from simply consuming electricity to actively understanding and managing it.",
+    kind: "content",
+    kicker: "11 · NEXT",
+    title: "From snapshots to patterns.",
+    cues: [
+      "More classrooms",
+      "Longer reporting history",
+      "Independent validation",
     ],
-    type: "content",
+    note: "Keep the scope honest: these are reports, not sensor telemetry.",
   },
   {
     id: "closing",
-    title: "Closing",
-    presenters: ["Viencei", "Wackeen", "Leo"],
-    content: [
-      { presenter: "Viencei", text: "WattWise makes classroom electricity consumption visible." },
-      { presenter: "Wackeen", text: "It turns appliance records into clear, useful insights." },
-      { presenter: "Leo", text: "And it empowers smarter decisions through mathematics, technology, and data." },
-      { presenter: "ALL", text: "We are the developers of WattWise: Measure smarter. Predict better. Power a more sustainable future." },
-    ],
-    type: "closing",
-  },
-  {
-    id: "cta",
-    title: "Ready to Experience It?",
-    presenter: "Leo",
-    content: [
-      "Thank you. We are ready for your questions!",
-      "Click below to explore the live system.",
-    ],
-    type: "cta",
+    kind: "closing",
+    kicker: "12 · WattWise",
+    title: "Thank you, we are now ready for your questions!",
+    cues: ["Visible use", "Clearer decisions", "A more sustainable campus"],
   },
 ];
 
-function SlideContent({ slide, index, isVisible, ref }) {
-  const presenter = slide.presenter ? PRESENTERS[slide.presenter] : null;
-  const presenters = slide.presenters ? slide.presenters.map(p => PRESENTERS[p]).filter(Boolean) : [];
-
-  const baseClass = `ip-slide ip-slide--${slide.type} lp-animate lp-animate--fade-up ${isVisible ? "is-visible" : ""} lp-stagger-${(index % 6) + 1}`;
-
+function CueList({ cues }) {
   return (
-    <section ref={ref} className={baseClass} id={slide.id} aria-labelledby={`${slide.id}-title`}>
-      <div className="ip-slide-inner">
-        {slide.type === "title" && (
-          <>
-            <div className="ip-title-badge">
-              <span className="ip-badge-icon">
-                <Zap size={28} />
-              </span>
-              <span className="ip-badge-text">INTERACTIVE PRESENTATION</span>
-            </div>
-            <h1 id={`${slide.id}-title`} className="ip-main-title">WATTWISE</h1>
-            <p className="ip-subtitle">{slide.subtitle}</p>
-            <div className="ip-presenters-title">
-              {presenters.map((p, i) => (
-                <span key={p.name} className="ip-presenter-chip" style={{ borderColor: p.color }}>
-                  <p.icon size={14} />
-                  {p.name}
-                </span>
-              ))}
-            </div>
-            <div className="ip-scroll-hint">
-              <span>Scroll to begin</span>
-              <ChevronRight size={20} className="ip-scroll-chevron" />
-            </div>
-          </>
-        )}
-
-        {slide.type === "content" && (
-          <>
-            {presenter && (
-              <div className="ip-presenter-badge" style={{ borderColor: presenter.color }}>
-                <presenter.icon size={16} />
-                <span>{presenter.name}</span>
-              </div>
-            )}
-            <h2 id={`${slide.id}-title`} className="ip-slide-title">{slide.title}</h2>
-            <div className="ip-slide-content">
-              {slide.content.map((line, i) => (
-                <p key={i} className="ip-slide-paragraph">{line}</p>
-              ))}
-            </div>
-          </>
-        )}
-
-        {slide.type === "formula" && (
-          <>
-            {presenter && (
-              <div className="ip-presenter-badge" style={{ borderColor: presenter.color }}>
-                <presenter.icon size={16} />
-                <span>{presenter.name}</span>
-              </div>
-            )}
-            <h2 id={`${slide.id}-title`} className="ip-slide-title">{slide.title}</h2>
-            <div className="ip-slide-content">
-              {slide.content.slice(0, -1).map((line, i) => (
-                <p key={i} className="ip-slide-paragraph">{line}</p>
-              ))}
-              <div className="ip-formula-display">
-                <div className="ip-formula-equation">
-                  <span className="ip-formula-part">Energy Consumption</span>
-                  <span className="ip-formula-equals">=</span>
-                  <span className="ip-formula-part">Power</span>
-                  <span className="ip-formula-times">×</span>
-                  <span className="ip-formula-part">Time</span>
-                  <span className="ip-formula-divide">÷</span>
-                  <span className="ip-formula-part">1,000</span>
-                </div>
-                <div className="ip-formula-example">
-                  <span className="ip-formula-part ip-highlight">{slide.formula.power} W</span>
-                  <span className="ip-formula-times">×</span>
-                  <span className="ip-formula-part ip-highlight">{slide.formula.time} hrs</span>
-                  <span className="ip-formula-divide">÷</span>
-                  <span className="ip-formula-part">1,000</span>
-                  <span className="ip-formula-equals">=</span>
-                  <span className="ip-formula-result ip-highlight">{slide.formula.result} kWh</span>
-                </div>
-              </div>
-              <p className="ip-slide-paragraph">{slide.content[slide.content.length - 1]}</p>
-            </div>
-          </>
-        )}
-
-        {slide.type === "demo" && (
-          <>
-            {presenter && (
-              <div className="ip-presenter-badge" style={{ borderColor: presenter.color }}>
-                <presenter.icon size={16} />
-                <span>{presenter.name}</span>
-              </div>
-            )}
-            <h2 id={`${slide.id}-title`} className="ip-slide-title">{slide.title}</h2>
-            <div className="ip-slide-content">
-              {slide.content.map((line, i) => (
-                <p key={i} className="ip-slide-paragraph">{line}</p>
-              ))}
-            </div>
-            <div className="ip-screenshot-container">
-              <ScreenshotMockup feature={slide.screenshot} />
-            </div>
-          </>
-        )}
-
-        {slide.type === "closing" && (
-          <>
-            <div className="ip-presenters-title">
-              {presenters.map((p, i) => (
-                <span key={p.name} className="ip-presenter-chip" style={{ borderColor: p.color }}>
-                  <p.icon size={14} />
-                  {p.name}
-                </span>
-              ))}
-            </div>
-            <h2 id={`${slide.id}-title`} className="ip-slide-title">{slide.title}</h2>
-            <div className="ip-slide-content ip-closing-content">
-              {slide.content.map((item, i) => (
-                <div key={i} className="ip-closing-line">
-                  <span className="ip-closing-presenter" style={{ color: item.presenter !== "ALL" ? PRESENTERS[item.presenter]?.color : "var(--accent)" }}>
-                    {item.presenter === "ALL" ? "ALL PRESENTERS" : `PRESENTER ${["1", "2", "3"][["Viencei", "Wackeen", "Leo"].indexOf(item.presenter)]}: ${item.presenter.toUpperCase()}`}
-                  </span>
-                  <span className="ip-closing-text" style={{ borderLeftColor: item.presenter !== "ALL" ? PRESENTERS[item.presenter]?.color : "var(--accent)" }}>
-                    {item.text}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {slide.type === "cta" && (
-          <>
-            {presenter && (
-              <div className="ip-presenter-badge" style={{ borderColor: presenter.color }}>
-                <presenter.icon size={16} />
-                <span>{presenter.name}</span>
-              </div>
-            )}
-            <h2 id={`${slide.id}-title`} className="ip-slide-title">{slide.title}</h2>
-            <div className="ip-slide-content">
-              {slide.content.map((line, i) => (
-                <p key={i} className="ip-slide-paragraph">{line}</p>
-              ))}
-            </div>
-            <div className="ip-cta-buttons">
-              <Link to="/auth/signup" className="ds-btn ds-btn--primary ds-btn--lg">
-                Get Started
-                <ArrowRight size={16} />
-              </Link>
-              <Link to="/mcs/admin" className="ds-btn ds-btn--ghost ds-btn--lg">
-                Admin Demo
-                <ArrowRight size={16} />
-              </Link>
-              <Link to="/mcs/user" className="ds-btn ds-btn--ghost ds-btn--lg">
-                User Demo
-                <ArrowRight size={16} />
-              </Link>
-            </div>
-          </>
-        )}
-      </div>
-    </section>
+    <ul className="ip-cues">
+      {cues.map((cue, index) => (
+        <li key={cue} style={{ "--cue-index": index }}>
+          <span className="ip-cue-mark">
+            <ChevronRight size={14} />
+          </span>
+          <span>{cue}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
-function ScreenshotMockup({ feature }) {
-  const mockups = {
-    signup: (
-      <div className="ip-mockup ip-mockup--signup">
-        <div className="ip-mockup-header">
-          <div className="ip-mockup-dots"><span /><span /><span /></div>
-          <div className="ip-mockup-url">wattwise-classrooms.vercel.app/auth/signup</div>
-        </div>
-        <div className="ip-mockup-content">
-          <div className="ip-mockup-panel ip-mockup-panel--aside">
-            <div className="ip-mockup-number">02 / WATTWISE</div>
-            <div className="ip-mockup-mark"><Zap size={24} /></div>
-            <h3>Create your<br />account.</h3>
-            <p>Pick a username and campus name. An admin will approve your access.</p>
-          </div>
-          <div className="ip-mockup-panel ip-mockup-panel--form">
-            <h4>Create your workspace</h4>
-            <div className="ip-mockup-field"><label>Username</label><input placeholder="juan" /></div>
-            <div className="ip-mockup-field"><label>Campus name</label><input placeholder="CSHS" /></div>
-            <div className="ip-mockup-field"><label>Email</label><input placeholder="you@example.com" type="email" /></div>
-            <div className="ip-mockup-field"><label>Password</label><input placeholder="••••••••" type="password" /></div>
-            <div className="ip-mockup-field"><label>Confirm password</label><input placeholder="••••••••" type="password" /></div>
-            <button className="ip-mockup-btn">Create account</button>
-          </div>
-        </div>
-      </div>
-    ),
-    admin: (
-      <div className="ip-mockup ip-mockup--admin">
-        <div className="ip-mockup-header">
-          <div className="ip-mockup-dots"><span /><span /><span /></div>
-          <div className="ip-mockup-url">wattwise-classrooms.vercel.app/mcs/admin</div>
-        </div>
-        <div className="ip-mockup-content">
-          <div className="ip-mockup-sidebar">
-            <div className="ip-mockup-nav-item active"><Building2 size={16} /><span>Buildings & Rooms</span></div>
-            <div className="ip-mockup-nav-item"><PlugZap size={16} /><span>Appliances</span></div>
-            <div className="ip-mockup-nav-item"><Users size={16} /><span>EMC Accounts</span></div>
-            <div className="ip-mockup-nav-item"><BarChart3 size={16} /><span>Reports</span></div>
-            <div className="ip-mockup-nav-item"><BellRing size={16} /><span>Notifications</span></div>
-          </div>
-          <div className="ip-mockup-main">
-            <div className="ip-mockup-metric"><span className="ip-metric-icon green"><Building2 size={14} /></span><strong>3</strong><small>Buildings</small></div>
-            <div className="ip-mockup-metric"><span className="ip-metric-icon amber"><Layers size={14} /></span><strong>12</strong><small>Floors</small></div>
-            <div className="ip-mockup-metric"><span className="ip-metric-icon blue"><Zap size={14} /></span><strong>48</strong><small>Rooms</small></div>
-            <div className="ip-mockup-metric"><span className="ip-metric-icon green"><Users size={14} /></span><strong>8</strong><small>Active EMCs</small></div>
-            <div className="ip-mockup-table">
-              <div className="ip-mockup-table-header"><span>Building</span><span>Floors</span><span>Rooms</span><span>EMCs</span></div>
-              <div className="ip-mockup-table-row"><span>G11</span><span>4</span><span>16</span><span>3</span></div>
-              <div className="ip-mockup-table-row"><span>ADMIN</span><span>2</span><span>8</span><span>2</span></div>
-              <div className="ip-mockup-table-row"><span>G12</span><span>6</span><span>24</span><span>3</span></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    ),
-    reports: (
-      <div className="ip-mockup ip-mockup--reports">
-        <div className="ip-mockup-header">
-          <div className="ip-mockup-dots"><span /><span /><span /></div>
-          <div className="ip-mockup-url">wattwise-classrooms.vercel.app/mcs/admin#reports</div>
-        </div>
-        <div className="ip-mockup-content">
-          <div className="ip-mockup-filters">
-            <select className="ip-mockup-select"><option>Month: 2026-10</option></select>
-            <select className="ip-mockup-select"><option>Group by: Day</option></select>
-            <select className="ip-mockup-select"><option>Building: All</option></select>
-            <select className="ip-mockup-select"><option>Room: All</option></select>
-          </div>
-          <div className="ip-mockup-charts">
-            <div className="ip-mockup-chart">
-              <div className="ip-chart-title">Energy by Day (kWh)</div>
-              <div className="ip-chart-bars">
-                {[12, 19, 8, 24, 15, 22, 10].map((h, i) => (
-                  <div key={i} className="ip-chart-bar" style={{ height: `${h * 3}px` }} title={`${h} kWh`} />
-                ))}
-              </div>
-            </div>
-            <div className="ip-mockup-chart">
-              <div className="ip-chart-title">By Appliance</div>
-              <div className="ip-chart-pie">
-                <div className="ip-pie-slice green" style={{ '--p': '35%' }} /><div className="ip-pie-slice amber" style={{ '--p': '25%' }} /><div className="ip-pie-slice blue" style={{ '--p': '20%' }} /><div className="ip-pie-slice muted" style={{ '--p': '20%' }} />
-              </div>
-              <div className="ip-chart-legend">
-                <span className="ip-legend-item"><span className="ip-legend-color green" />Fan</span>
-                <span className="ip-legend-item"><span className="ip-legend-color amber" />Light</span>
-                <span className="ip-legend-item"><span className="ip-legend-color blue" />PC</span>
-                <span className="ip-legend-item"><span className="ip-legend-color muted" />Other</span>
-              </div>
-            </div>
-          </div>
-          <div className="ip-mockup-table">
-            <div className="ip-mockup-table-header"><span>Date</span><span>Room</span><span>Appliance</span><span>Hours</span><span>Energy</span></div>
-            <div className="ip-mockup-table-row"><span>Oct 23</span><span>G11-301</span><span>Fan</span><span>4.0</span><span>0.4 kWh</span></div>
-            <div className="ip-mockup-table-row"><span>Oct 23</span><span>G11-301</span><span>LED Light</span><span>8.0</span><span>0.48 kWh</span></div>
-            <div className="ip-mockup-table-row"><span>Oct 22</span><span>G12-205</span><span>PC</span><span>6.0</span><span>1.2 kWh</span></div>
-          </div>
-        </div>
-      </div>
-    ),
-    buildings: (
-      <div className="ip-mockup ip-mockup--buildings">
-        <div className="ip-mockup-header">
-          <div className="ip-mockup-dots"><span /><span /><span /></div>
-          <div className="ip-mockup-url">wattwise-classrooms.vercel.app/mcs/admin#buildings</div>
-        </div>
-        <div className="ip-mockup-content">
-          <div className="ip-mockup-building-tree">
-            <div className="ip-tree-building">
-              <div className="ip-tree-node ip-tree-building-node"><Building2 size={16} /><strong>G11 Building</strong><span>4 Floors · 16 Rooms</span></div>
-              <div className="ip-tree-floors">
-                <div className="ip-tree-floor">
-                  <div className="ip-tree-node"><Layers size={14} /><span>Floor 1</span><span>4 Rooms</span></div>
-                  <div className="ip-tree-rooms">
-                    <div className="ip-tree-room">🏫 Room 101</div>
-                    <div className="ip-tree-room">🏫 Room 102</div>
-                    <div className="ip-tree-room">🏫 Room 103</div>
-                    <div className="ip-tree-room">🏫 Room 104</div>
-                  </div>
-                </div>
-                <div className="ip-tree-floor">
-                  <div className="ip-tree-node"><Layers size={14} /><span>Floor 2</span><span>4 Rooms</span></div>
-                  <div className="ip-tree-rooms">
-                    <div className="ip-tree-room">🏫 Room 201</div>
-                    <div className="ip-tree-room">🏫 Room 202</div>
-                    <div className="ip-tree-room">🏫 Room 203</div>
-                    <div className="ip-tree-room">🏫 Room 204</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="ip-tree-building">
-              <div className="ip-tree-node ip-tree-building-node"><Building2 size={16} /><strong>ADMIN Building</strong><span>2 Floors · 8 Rooms</span></div>
-              <div className="ip-tree-floors">
-                <div className="ip-tree-floor">
-                  <div className="ip-tree-node"><Layers size={14} /><span>Floor 1</span><span>4 Rooms</span></div>
-                  <div className="ip-tree-rooms">
-                    <div className="ip-tree-room">🏢 Office 101</div>
-                    <div className="ip-tree-room">🏢 Office 102</div>
-                    <div className="ip-tree-room">🏢 Office 103</div>
-                    <div className="ip-tree-room">🏢 Office 104</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <button className="ip-mockup-btn ip-mockup-btn--secondary">+ Add Building</button>
-        </div>
-      </div>
-    ),
-    "emc-login": (
-      <div className="ip-mockup ip-mockup--emc-login">
-        <div className="ip-mockup-header">
-          <div className="ip-mockup-dots"><span /><span /><span /></div>
-          <div className="ip-mockup-url">wattwise-classrooms.vercel.app/mcs/user</div>
-        </div>
-        <div className="ip-mockup-content">
-          <div className="ip-mockup-panel ip-mockup-panel--aside">
-            <div className="ip-mockup-number">01 / @MCS</div>
-            <div className="ip-mockup-mark"><Zap size={24} /></div>
-            <h3>Make your<br />room count.</h3>
-            <p>Record what your classroom uses. Make every energy count.</p>
-          </div>
-          <div className="ip-mockup-panel ip-mockup-panel--form">
-            <h4>Welcome!</h4>
-            <p className="ip-mockup-form-intro">Use the username and password provided by your administrator.</p>
-            <div className="ip-mockup-field"><label>Account name</label><input placeholder="e.g. maria.santos" /></div>
-            <div className="ip-mockup-field"><label>Password</label><input placeholder="••••••••" type="password" /></div>
-            <button className="ip-mockup-btn">Continue to workspace</button>
-            <p className="ip-mockup-footnote">Ask your administrator to create or reset your credentials.</p>
-          </div>
-        </div>
-      </div>
-    ),
-    "emc-reporting": (
-      <div className="ip-mockup ip-mockup--emc-reporting">
-        <div className="ip-mockup-header">
-          <div className="ip-mockup-dots"><span /><span /><span /></div>
-          <div className="ip-mockup-url">wattwise-classrooms.vercel.app/mcs/user</div>
-        </div>
-        <div className="ip-mockup-content">
-          <div className="ip-mockup-emc-header">
-            <div className="ip-mockup-room-info">
-              <div className="ip-mockup-room-badge">ASSIGNED ROOM</div>
-              <h3>G11 Building · Floor 3 · Room 301</h3>
-              <p>Classroom · 40 occupants max</p>
-            </div>
-            <div className="ip-mockup-metrics">
-              <div className="ip-metric"><span className="ip-metric-icon green"><Zap size={14} /></span><strong>6</strong><small>Appliances</small></div>
-              <div className="ip-metric"><span className="ip-metric-icon blue"><Monitor size={14} /></span><strong>12</strong><small>Reports</small></div>
-            </div>
-          </div>
-          <div className="ip-mockup-report-form">
-            <h4>Submit a Report</h4>
-            <div className="ip-mockup-field"><label>Appliance</label>
-              <select className="ip-mockup-select">
-                <option>Electric Fan (100W)</option>
-                <option>LED Light (60W)</option>
-                <option>Desktop PC (300W)</option>
-                <option>Projector (250W)</option>
-                <option>Air Conditioner (1200W)</option>
-              </select>
-            </div>
-            <div className="ip-mockup-field-row">
-              <div className="ip-mockup-field"><label>Hours Used</label><input placeholder="4.0" type="number" step="0.5" /></div>
-              <div className="ip-mockup-field"><label>Custom Date/Time</label><input placeholder="Optional" type="datetime-local" /></div>
-            </div>
-            <div className="ip-mockup-energy-preview">
-              <Calculator size={16} />
-              <span>Preview: 300W × 4.0 hrs ÷ 1000 = <strong>1.2 kWh</strong></span>
-            </div>
-            <button className="ip-mockup-btn">Submit Report</button>
-          </div>
-          <div className="ip-mockup-recent-reports">
-            <h4>Recent Reports</h4>
-            <div className="ip-mockup-table">
-              <div className="ip-mockup-table-header"><span>Appliance</span><span>Hours</span><span>Energy</span><span>Submitted</span></div>
-              <div className="ip-mockup-table-row"><span>Electric Fan</span><span>4.0</span><span>0.4 kWh</span><span>Oct 23, 10:30 AM</span></div>
-              <div className="ip-mockup-table-row"><span>LED Light</span><span>8.0</span><span>0.48 kWh</span><span>Oct 23, 8:00 AM</span></div>
-              <div className="ip-mockup-table-row"><span>Desktop PC</span><span>6.0</span><span>1.8 kWh</span><span>Oct 22, 2:15 PM</span></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    ),
-  };
-
-  return mockups[feature] || (
-    <div className="ip-mockup ip-mockup--placeholder">
-      <div className="ip-mockup-header">
-        <div className="ip-mockup-dots"><span /><span /><span /></div>
-        <div className="ip-mockup-url">Screenshot placeholder</div>
-      </div>
-      <div className="ip-mockup-content">
-        <p>Screenshot for "{feature}" coming soon</p>
+function TryThis({ children }) {
+  return (
+    <div className="ip-try">
+      <MousePointer2 size={15} />
+      <div>
+        <span>TRY THIS</span>
+        <p>{children}</p>
       </div>
     </div>
   );
 }
 
-function ProgressIndicator({ currentSlide, totalSlides }) {
+function FormulaCard({ formula }) {
   return (
-    <div className="ip-progress-indicator" aria-label="Presentation progress">
-      <div className="ip-progress-bar">
-        <div className="ip-progress-fill" style={{ width: `${((currentSlide + 1) / totalSlides) * 100}%` }} />
+    <div className="ip-formula-card">
+      <div className="ip-formula-card__label">
+        <Calculator size={15} />
+        <span>ENERGY ESTIMATE</span>
       </div>
-      <span className="ip-progress-text">{currentSlide + 1} / {totalSlides}</span>
+      <div className="ip-formula-line">
+        <span>Energy</span>
+        <b>=</b>
+        <span>Power</span>
+        <b>×</b>
+        <span>Time</span>
+        <b>÷</b>
+        <span>1,000</span>
+      </div>
+      <div className="ip-formula-example">
+        <strong>{formula.power} W</strong>
+        <span>×</span>
+        <strong>{formula.time} h</strong>
+        <span>÷</span>
+        <span>1,000</span>
+        <span>=</span>
+        <em>{formula.result} kWh</em>
+      </div>
     </div>
   );
 }
 
-function NavigationControls({ currentSlide, totalSlides, onNext, onPrev, canGoNext, canGoPrev }) {
+function TechGrid({ items }) {
   return (
-    <div className="ip-nav-controls">
-      <button
-        className="ip-nav-btn ip-nav-btn--prev"
-        onClick={onPrev}
-        disabled={!canGoPrev}
-        aria-label="Previous slide"
+    <div className="ip-tech-grid">
+      {items.map((item) => (
+        <span key={item}>{item}</span>
+      ))}
+    </div>
+  );
+}
+
+function SlideBody({ slide, direction, onNext }) {
+  const slideClass = `ip-slide ip-slide--${slide.kind} ${
+    direction > 0 ? "is-next" : "is-prev"
+  }`;
+
+  if (slide.kind === "title") {
+    return (
+      <article className={slideClass}>
+        <div className="ip-title-mark">
+          <Sparkles size={14} />
+          <span>{slide.eyebrow}</span>
+        </div>
+        <h1 className="ip-title">{slide.title}</h1>
+        <p className="ip-subtitle">{slide.subtitle}</p>
+        <p className="ip-lead">{slide.lead}</p>
+        <div className="ip-title-actions">
+          <button type="button" className="ip-start-btn" onClick={onNext}>
+            Start walkthrough
+            <ArrowRight size={16} />
+          </button>
+          <span className="ip-title-hint">
+            <Keyboard size={14} />
+            A / D or arrow keys · swipe on mobile
+          </span>
+        </div>
+      </article>
+    );
+  }
+
+  if (slide.kind === "closing") {
+    return (
+      <article className={slideClass}>
+        <div className="ip-slide__top">
+          <span className="ip-kicker">{slide.kicker}</span>
+        </div>
+        <h2 className="ip-title ip-title--slide ip-title--statement">
+          {slide.title}
+        </h2>
+        <CueList cues={slide.cues} />
+        <div className="ip-closing-actions">
+          <Link to="/" className="ds-btn ds-btn--primary">
+            Open the live app
+            <ArrowRight size={16} />
+          </Link>
+          <Link to="/mcs/admin" className="ds-btn ds-btn--ghost">
+            Admin console
+            <ExternalLink size={16} />
+          </Link>
+        </div>
+      </article>
+    );
+  }
+
+  return (
+    <article className={slideClass}>
+      <div className="ip-slide__top">
+        <span className="ip-kicker">{slide.kicker}</span>
+      </div>
+      <h2 className="ip-title ip-title--slide">{slide.title}</h2>
+
+      {slide.kind === "formula" && <FormulaCard formula={slide.formula} />}
+
+      <CueList cues={slide.cues} />
+      {slide.demoHint && <TryThis>{slide.demoHint}</TryThis>}
+      {slide.note && <p className="ip-note">{slide.note}</p>}
+      {slide.tech && <TechGrid items={slide.tech} />}
+    </article>
+  );
+}
+
+function DemoStage({
+  activeDemo,
+  mountedDemos,
+  demoOpen,
+  demoExpanded,
+  iframeRefs,
+  onFrameLoad,
+  onToggleExpand,
+  onClose,
+  onOpen,
+}) {
+  if (!activeDemo) return null;
+
+  return (
+    <>
+      <aside
+        className={`ip-demo${demoOpen ? " is-open" : ""}${
+          demoExpanded ? " is-expanded" : ""
+        }`}
+        aria-hidden={!demoOpen}
       >
-        <ChevronLeft size={20} />
-      </button>
-      <div className="ip-nav-dots">
-        {Array.from({ length: totalSlides }, (_, i) => (
-          <button
-            key={i}
-            className={`ip-nav-dot ${i === currentSlide ? "active" : ""}`}
-            onClick={() => {
-              // Scroll to slide
-              const slide = document.getElementById(SLIDES[i].id);
-              if (slide) slide.scrollIntoView({ behavior: "smooth" });
-            }}
-            aria-label={`Go to slide ${i + 1}`}
-          />
-        ))}
-      </div>
-      <button
-        className="ip-nav-btn ip-nav-btn--next"
-        onClick={onNext}
-        disabled={!canGoNext}
-        aria-label="Next slide"
-      >
-        <ChevronRight size={20} />
-      </button>
-    </div>
+        <div className="ip-demo__bar">
+          <div className="ip-demo__dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div className="ip-demo__title">
+            <MonitorSmartphone size={14} />
+            <span>{DEMO_LABELS[activeDemo]}</span>
+          </div>
+          <div className="ip-demo__actions">
+            <a
+              className="ip-icon-btn"
+              href={DEMO_SOURCES[activeDemo]}
+              target="_blank"
+              rel="noreferrer"
+              title="Open demo in a new tab"
+              aria-label="Open demo in a new tab"
+            >
+              <ExternalLink size={15} />
+            </a>
+            <button
+              type="button"
+              className="ip-icon-btn"
+              onClick={onToggleExpand}
+              title={demoExpanded ? "Restore demo" : "Expand demo"}
+              aria-label={demoExpanded ? "Restore demo" : "Expand demo"}
+            >
+              {demoExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            </button>
+            <button
+              type="button"
+              className="ip-icon-btn"
+              onClick={onClose}
+              title="Hide demo"
+              aria-label="Hide demo"
+            >
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+
+        <div className="ip-demo__viewport">
+          {Object.entries(DEMO_SOURCES).map(([key, src]) => (
+            <div
+              className={`ip-demo__frame${
+                activeDemo === key ? " is-active" : ""
+              }`}
+              key={key}
+              aria-hidden={activeDemo !== key}
+            >
+              {mountedDemos.has(key) && (
+                <iframe
+                  ref={(element) => {
+                    iframeRefs.current[key] = element;
+                  }}
+                  src={src}
+                  title={`${DEMO_LABELS[key]} live demo`}
+                  onLoad={onFrameLoad}
+                />
+              )}
+            </div>
+          ))}
+          {!mountedDemos.has(activeDemo) && (
+            <div className="ip-demo__loading">
+              <span className="ip-spinner" />
+              Loading live demo…
+            </div>
+          )}
+        </div>
+
+        <div className="ip-demo__foot">
+          <code>{DEMO_SOURCES[activeDemo]}</code>
+          <span>Live app · session preserved</span>
+        </div>
+      </aside>
+
+      {!demoOpen && (
+        <button type="button" className="ip-demo-dock" onClick={onOpen}>
+          <span className="ip-demo-dock__pulse" aria-hidden="true" />
+          <span className="ip-demo-dock__text">
+            <strong>Live demo</strong>
+            <small>{DEMO_LABELS[activeDemo]}</small>
+          </span>
+          <Play size={15} />
+        </button>
+      )}
+    </>
   );
 }
 
 export function InteractivePresentation() {
   const { darkMode, toggleTheme } = useTheme();
-  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
-  const slideRefs = useRef([]);
+  const [index, setIndex] = useState(0);
+  const [direction, setDirection] = useState(1);
+  const [mountedDemos, setMountedDemos] = useState(() => new Set());
+  const [activeDemo, setActiveDemo] = useState(null);
+  const [demoOpen, setDemoOpen] = useState(false);
+  const [demoExpanded, setDemoExpanded] = useState(false);
 
-  // Scroll animations for each slide
-  const slideAnimations = SLIDES.map((_, i) => useScrollAnimation({ threshold: 0.3, triggerOnce: true }));
+  const indexRef = useRef(0);
+  const iframeRefs = useRef({});
+  const touchStartRef = useRef(null);
+  const automationToken = useRef(0);
+  const automationDone = useRef(new Set());
+  const slide = SLIDES[index];
 
-  // Update current slide based on scroll position
-  useEffect(() => {
-    const handleScroll = () => {
-      const scrollY = window.scrollY + window.innerHeight / 2;
-      let newIndex = 0;
-      
-      slideRefs.current.forEach((ref, i) => {
-        if (ref && ref.offsetTop <= scrollY) {
-          newIndex = i;
-        }
-      });
-      
-      setCurrentSlideIndex(newIndex);
-    };
-
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
+  const goTo = useCallback((next) => {
+    const clamped = Math.max(0, Math.min(SLIDES.length - 1, next));
+    setDirection(clamped >= indexRef.current ? 1 : -1);
+    indexRef.current = clamped;
+    setIndex(clamped);
   }, []);
 
-  const goToSlide = (index) => {
-    const ref = slideRefs.current[index];
-    if (ref) {
-      ref.scrollIntoView({ behavior: "smooth" });
+  const goNext = useCallback(() => goTo(indexRef.current + 1), [goTo]);
+  const goPrev = useCallback(() => goTo(indexRef.current - 1), [goTo]);
+
+  const openDemo = useCallback(() => {
+    const next = activeDemo || "landing";
+    setActiveDemo(next);
+    setMountedDemos((current) => {
+      if (current.has(next)) return current;
+      const copy = new Set(current);
+      copy.add(next);
+      return copy;
+    });
+    setDemoOpen(true);
+  }, [activeDemo]);
+
+  const closeDemo = useCallback(() => {
+    setDemoOpen(false);
+    setDemoExpanded(false);
+  }, []);
+
+  const toggleExpand = useCallback(() => {
+    setDemoExpanded((current) => !current);
+  }, []);
+
+  useEffect(() => {
+    if (!slide.demo) {
+      setDemoOpen(false);
+      return;
     }
+    setActiveDemo(slide.demo);
+    setMountedDemos((current) => {
+      if (current.has(slide.demo)) return current;
+      const copy = new Set(current);
+      copy.add(slide.demo);
+      return copy;
+    });
+    setDemoOpen(true);
+  }, [index, slide.demo]);
+
+  useEffect(() => {
+    const automation = SLIDE_AUTOMATION[slide.id];
+    if (!automation || automationDone.current.has(slide.id)) return undefined;
+
+    const token = automationToken.current + 1;
+    automationToken.current = token;
+    const isCurrent = () => automationToken.current === token;
+    const markDone = () => automationDone.current.add(slide.id);
+
+    const timer = window.setTimeout(() => {
+      automation({ refs: iframeRefs, isCurrent, markDone }).catch(() => {
+        // A demo can be closed or replaced while it is being automated.
+      });
+    }, 700);
+
+    return () => {
+      window.clearTimeout(timer);
+      if (automationToken.current === token) automationToken.current = token + 1;
+    };
+  }, [index, slide.id]);
+
+  useEffect(() => {
+    Object.values(iframeRefs.current).forEach((frame) => {
+      try {
+        const doc = frame?.contentDocument;
+        if (doc?.documentElement) {
+          doc.documentElement.dataset.theme = darkMode ? "dark" : "light";
+        }
+      } catch {
+        // The demo is same-origin; ignore a frame that is still navigating.
+      }
+    });
+  }, [darkMode, mountedDemos]);
+
+  useEffect(() => {
+    document.body.style.overflow = demoExpanded ? "hidden" : "";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [demoExpanded]);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      const target = event.target;
+      const tag = target?.tagName;
+      if (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+
+      if (demoExpanded) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setDemoExpanded(false);
+        }
+        return;
+      }
+
+      if (event.key === "ArrowRight" || event.key === "PageDown") {
+        event.preventDefault();
+        goNext();
+      } else if (event.key === "ArrowLeft" || event.key === "PageUp") {
+        event.preventDefault();
+        goPrev();
+      } else if (event.code === "Space") {
+        if (tag === "BUTTON" || tag === "A") return;
+        event.preventDefault();
+        goNext();
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        goTo(0);
+      } else if (event.key === "End") {
+        event.preventDefault();
+        goTo(SLIDES.length - 1);
+      } else if (event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        goPrev();
+      } else if (event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        goNext();
+      } else if (event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        if (demoOpen) toggleExpand();
+        else openDemo();
+      } else if (event.key === "Escape" && demoOpen) {
+        closeDemo();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    closeDemo,
+    demoExpanded,
+    demoOpen,
+    goNext,
+    goPrev,
+    goTo,
+    openDemo,
+    toggleExpand,
+  ]);
+
+  const handleFrameLoad = useCallback(
+    (event) => {
+      try {
+        const doc = event.currentTarget.contentDocument;
+        if (doc?.documentElement) {
+          doc.documentElement.dataset.theme = darkMode ? "dark" : "light";
+        }
+      } catch {
+        // Same-origin frame only.
+      }
+    },
+    [darkMode],
+  );
+
+  const handleTouchStart = (event) => {
+    if (event.touches.length !== 1) return;
+    touchStartRef.current = {
+      x: event.touches[0].clientX,
+      y: event.touches[0].clientY,
+    };
   };
 
-  const goNext = () => goToSlide(Math.min(currentSlideIndex + 1, SLIDES.length - 1));
-  const goPrev = () => goToSlide(Math.max(currentSlideIndex - 1, 0));
+  const handleTouchEnd = (event) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start || event.changedTouches.length !== 1) return;
+    const dx = event.changedTouches[0].clientX - start.x;
+    const dy = event.changedTouches[0].clientY - start.y;
+    if (Math.abs(dx) < 52 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
+    if (dx < 0) goNext();
+    else goPrev();
+  };
 
   return (
     <main className="ip-page">
       <Topbar
-        subtitle="INTERACTIVE PRESENTATION"
+        subtitle="LIVE WALKTHROUGH"
         right={
           <>
             <ThemeToggle darkMode={darkMode} onToggle={toggleTheme} />
-            <Link to="/auth/signup" className="ds-btn ds-btn--primary ds-btn--sm">
-              Get Started
-              <ArrowRight size={14} />
+            <Link to="/" className="ds-btn ds-btn--ghost ds-btn--sm">
+              Exit
             </Link>
           </>
         }
       />
 
-      <ProgressIndicator currentSlide={currentSlideIndex} totalSlides={SLIDES.length} />
-      
-      <NavigationControls
-        currentSlide={currentSlideIndex}
-        totalSlides={SLIDES.length}
-        onNext={goNext}
-        onPrev={goPrev}
-        canGoNext={currentSlideIndex < SLIDES.length - 1}
-        canGoPrev={currentSlideIndex > 0}
-      />
+      <div className={`ip-shell${demoOpen ? " has-demo" : ""}`}>
+        <section
+          className="ip-deck"
+          aria-label="WattWise presentation"
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+        >
+          <div className="ip-progress" aria-label="Presentation progress">
+            <div className="ip-progress__steps">
+              {SLIDES.map((item, itemIndex) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  className={`ip-progress__step${
+                    itemIndex === index ? " is-active" : ""
+                  }${itemIndex < index ? " is-done" : ""}`}
+                  onClick={() => goTo(itemIndex)}
+                  aria-label={`Go to slide ${itemIndex + 1}: ${item.title}`}
+                  aria-current={itemIndex === index ? "step" : undefined}
+                />
+              ))}
+            </div>
+            <span className="ip-progress__counter">
+              {String(index + 1).padStart(2, "0")} /{" "}
+              {String(SLIDES.length).padStart(2, "0")}
+            </span>
+          </div>
 
-      <div className="ip-slides-container">
-        {SLIDES.map((slide, index) => {
-          const [ref, isVisible] = slideAnimations[index];
-          return (
-            <SlideContent
+          <div className="ip-slide-wrap">
+            <SlideBody
               key={slide.id}
               slide={slide}
-              index={index}
-              isVisible={isVisible}
-              ref={(el) => { slideRefs.current[index] = el; ref(el); }}
+              direction={direction}
+              onNext={goNext}
             />
-          );
-        })}
-      </div>
+          </div>
 
-      <PageFooter
-        showPrivacy
-        showContact
-        contactEmail="cshswattwise@gmail.com"
-        onPrivacyClick={() => window.dispatchEvent(new CustomEvent("open-privacy"))}
-      />
+          <nav className="ip-controls" aria-label="Slide controls">
+            <div className="ip-controls__group">
+              <button
+                type="button"
+                className="ip-nav-btn"
+                onClick={goPrev}
+                disabled={index === 0}
+                aria-label="Previous slide"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              <button
+                type="button"
+                className="ip-nav-btn"
+                onClick={goNext}
+                disabled={index === SLIDES.length - 1}
+                aria-label="Next slide"
+              >
+                <ChevronRight size={18} />
+              </button>
+            </div>
+            <span className="ip-controls__hint">
+              <Keyboard size={14} />
+              A / D or arrows · F fullscreen
+            </span>
+            <button
+              type="button"
+              className="ip-demo-trigger"
+              onClick={demoOpen ? closeDemo : openDemo}
+            >
+              <Play size={14} />
+              {demoOpen ? "Hide demo" : "Live demo"}
+            </button>
+          </nav>
+
+          <PageFooter
+            showPrivacy
+            showContact
+            contactEmail="cshswattwise@gmail.com"
+            onPrivacyClick={() =>
+              window.dispatchEvent(new CustomEvent("open-privacy"))
+            }
+          />
+        </section>
+
+        <DemoStage
+          activeDemo={activeDemo}
+          mountedDemos={mountedDemos}
+          demoOpen={demoOpen}
+          demoExpanded={demoExpanded}
+          iframeRefs={iframeRefs}
+          onFrameLoad={handleFrameLoad}
+          onToggleExpand={toggleExpand}
+          onClose={closeDemo}
+          onOpen={openDemo}
+        />
+      </div>
     </main>
   );
 }

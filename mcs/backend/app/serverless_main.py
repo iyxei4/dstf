@@ -12,6 +12,7 @@ from calendar import day_name, monthrange
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import asyncio
 import hashlib
 import hmac
 import os
@@ -120,6 +121,33 @@ class SupabaseClient:
                     raise
         response.raise_for_status()
         return response.json()
+
+    async def count(self, table: str, filters: dict = None) -> int:
+        """Return an exact row count without downloading the matching rows."""
+        params = {"select": "id", "limit": "1"}
+        params.update(self._build_filter_params(filters))
+
+        for attempt in range(2):
+            try:
+                response = await self.client.get(
+                    f"/{table}",
+                    params=params,
+                    headers={"Prefer": "count=exact"},
+                )
+                break
+            except (httpx.ReadError, httpx.RemoteProtocolError, httpx.ConnectError):
+                await self.close()
+                if attempt == 1:
+                    raise
+
+        response.raise_for_status()
+        content_range = response.headers.get("content-range", "")
+        if "/" in content_range:
+            total = content_range.rsplit("/", 1)[1]
+            if total.isdigit():
+                return int(total)
+        # Fallback for a proxy that strips Content-Range.
+        return len(response.json())
     
     async def insert(self, table: str, data: dict | list[dict]) -> list[dict]:
         """INSERT and return inserted rows."""
@@ -894,18 +922,26 @@ async def _room_map_stats(
 ) -> tuple[list[dict], dict[int, dict], dict[str, float], dict[int, list[str]]]:
     """Trailing-30-day usage per room, per-building average, and assigned users."""
     cutoff = (datetime.utcnow() - timedelta(days=30)).isoformat()
-    rooms = await _ordered_rooms(db)
+    rooms, usage, assigned = await asyncio.gather(
+        _ordered_rooms(db),
+        _select_all(
+            db,
+            "usage_records",
+            columns="room_id,appliance_id,energy_kwh",
+            filters={"created_at": f"gte.{cutoff}"},
+            order="created_at,id",
+        ),
+        _select_all(
+            db,
+            "classroom_users",
+            columns="username,assigned_room_id",
+            order="username",
+        ),
+    )
     room_usage: dict[int, dict] = {
         room["id"]: {"kwh": 0.0, "appliance_ids": set(), "submissions": 0}
         for room in rooms
     }
-    usage = await _select_all(
-        db,
-        "usage_records",
-        columns="room_id,appliance_id,energy_kwh",
-        filters={"created_at": f"gte.{cutoff}"},
-        order="created_at,id",
-    )
     for row in usage:
         metrics = room_usage.get(row.get("room_id"))
         if metrics is None:
@@ -926,12 +962,6 @@ async def _room_map_stats(
         for code in building_totals
     }
 
-    assigned = await _select_all(
-        db,
-        "classroom_users",
-        columns="username,assigned_room_id",
-        order="username",
-    )
     room_users: dict[int, list[str]] = {room["id"]: [] for room in rooms}
     for user in assigned:
         room_id = user.get("assigned_room_id")
@@ -1639,34 +1669,6 @@ async def admin_reports(
     month = month or now.strftime("%Y-%m")
     start, end = _month_bounds(month)
 
-    filters: dict[str, str] = {}
-    building_room_ids: set[int] | None = None
-    if building:
-        building_rooms = await db.select(
-            "classroom_rooms",
-            columns="id",
-            filters={"building_code": f"eq.{building}"},
-        )
-        building_room_ids = {room["id"] for room in building_rooms}
-    if room_id:
-        filters["room_id"] = f"eq.{room_id}"
-    if section_id:
-        filters["section_id"] = f"eq.{section_id}"
-    if appliance_id:
-        filters["appliance_id"] = f"eq.{appliance_id}"
-
-    appliance_names = {
-        item["id"]: item["name"]
-        for item in await db.select("appliances", columns="id,name")
-    }
-    room_labels = {
-        item["id"]: f"{item.get('building_code', '')} {item.get('room_number', '')}"
-        for item in await db.select(
-            "classroom_rooms",
-            columns="id,building_code,room_number",
-        )
-    }
-
     if group == "month":
         bucket_keys: list[str] = []
         cursor = datetime(start.year, start.month, 1)
@@ -1679,12 +1681,23 @@ async def admin_reports(
         bucket_keys = []
         scan_start = start
 
-    records: list[dict] = []
-    scan_records: list[dict] = []
-    if building_room_ids is None or building_room_ids:
-        query_filters = dict(filters)
-        query_filters["created_at"] = f"gte.{scan_start.isoformat()}"
-        rows = await _select_all(
+    filters: dict[str, str] = {}
+    if room_id:
+        filters["room_id"] = f"eq.{room_id}"
+    if section_id:
+        filters["section_id"] = f"eq.{section_id}"
+    if appliance_id:
+        filters["appliance_id"] = f"eq.{appliance_id}"
+    query_filters = dict(filters)
+    query_filters["created_at"] = f"gte.{scan_start.isoformat()}"
+
+    all_rooms, appliance_rows, rows = await asyncio.gather(
+        db.select(
+            "classroom_rooms",
+            columns="id,building_code,room_number",
+        ),
+        db.select("appliances", columns="id,name"),
+        _select_all(
             db,
             "usage_records",
             columns=(
@@ -1693,7 +1706,25 @@ async def admin_reports(
             ),
             filters=query_filters,
             order="created_at,id",
-        )
+        ),
+    )
+
+    building_room_ids: set[int] | None = None
+    if building:
+        building_room_ids = {
+            room["id"]
+            for room in all_rooms
+            if room.get("building_code") == building
+        }
+    appliance_names = {item["id"]: item["name"] for item in appliance_rows}
+    room_labels = {
+        item["id"]: f"{item.get('building_code', '')} {item.get('room_number', '')}"
+        for item in all_rooms
+    }
+
+    records: list[dict] = []
+    scan_records: list[dict] = []
+    if building_room_ids is None or building_room_ids:
         for row in rows:
             moment = _parse_db_datetime(row.get("started_at") or row.get("created_at"))
             created = _parse_db_datetime(row.get("created_at")) or moment
@@ -1911,21 +1942,19 @@ async def admin_room_detail(
         raise HTTPException(status_code=404, detail="Room not found.")
 
     cutoff = (datetime.utcnow() - timedelta(days=30)).isoformat()
-    recent_rows = await db.select(
-        "usage_records",
-        columns="id,user_id,appliance_id,hours,energy_kwh,created_at",
-        filters={"room_id": f"eq.{room_id}", "created_at": f"gte.{cutoff}"},
-        order="created_at.desc",
-        limit=5,
+    recent_rows, appliance_rows, user_rows = await asyncio.gather(
+        db.select(
+            "usage_records",
+            columns="id,user_id,appliance_id,hours,energy_kwh,created_at",
+            filters={"room_id": f"eq.{room_id}", "created_at": f"gte.{cutoff}"},
+            order="created_at.desc",
+            limit=5,
+        ),
+        db.select("appliances", columns="id,name"),
+        db.select("classroom_users", columns="id,username"),
     )
-    appliance_names = {
-        item["id"]: item["name"]
-        for item in await db.select("appliances", columns="id,name")
-    }
-    user_names = {
-        item["id"]: item["username"]
-        for item in await db.select("classroom_users", columns="id,username")
-    }
+    appliance_names = {item["id"]: item["name"] for item in appliance_rows}
+    user_names = {item["id"]: item["username"] for item in user_rows}
     recent = [
         {
             "id": row.get("id"),
@@ -2072,32 +2101,77 @@ async def admin_dashboard(
     sections_offset = max(0, sections_offset)
 
     try:
-        # Fetch records from the start of the month, then apply the upper
-        # bound in Python. PostgREST filters are keyed by column, so a dict
-        # cannot carry both gte and lt for the same column.
-        start_iso = start.isoformat()
-        records = await _select_all(
-            db,
-            "usage_records",
-            columns="energy_kwh,section_id,user_id,created_at",
-            filters={"created_at": f"gte.{start_iso}"},
-            order="created_at,id",
-        )
-        month_records = []
-        for row in records:
-            moment = _parse_db_datetime(row.get("created_at"))
-            if moment is not None and moment < end:
-                month_records.append(row)
-        records = month_records
+        # The selected month and the six-month trend share one bounded read.
+        # Month stepping must use calendar months so no month is skipped by a
+        # fixed 32-day offset.
+        base_index = start.year * 12 + start.month - 1
+        month_starts = []
+        for offset in range(5, -1, -1):
+            year, month_number = divmod(base_index - offset, 12)
+            month_starts.append(datetime(year, month_number + 1, 1))
 
-        # Section catalog (all sections) powers the account/room selectors.
-        section_rows = await _select_all(
-            db,
-            "classroom_sections",
-            columns="id,name,grade,section_name",
-            order="name",
+        (
+            scan_rows,
+            section_rows,
+            users_data,
+            all_rooms,
+            users_total,
+            pending_count,
+            appliances,
+        ) = await asyncio.gather(
+            _select_all(
+                db,
+                "usage_records",
+                columns="energy_kwh,section_id,user_id,created_at",
+                filters={"created_at": f"gte.{month_starts[0].isoformat()}"},
+                order="created_at,id",
+            ),
+            _select_all(
+                db,
+                "classroom_sections",
+                columns="id,name,grade,section_name",
+                order="name",
+            ),
+            db.select(
+                "classroom_users",
+                columns="id,username,status,last_seen,password_hash,section_id,assigned_room_id",
+                order="last_seen.desc",
+                limit=users_limit,
+                offset=users_offset,
+            ),
+            db.select(
+                "classroom_rooms",
+                columns=(
+                    "id,building_code,building_name,floor,room_index,"
+                    "room_number,room_type,custom_type,room_name"
+                ),
+            ),
+            db.count("classroom_users"),
+            db.count("classroom_users", {"status": "eq.pending"}),
+            db.select(
+                "appliances",
+                columns="id,name,wattage,quantity",
+                order="name",
+            ),
         )
+
         section_lookup = {section["id"]: section for section in section_rows}
+        rooms = {room["id"]: _room_identity(room) for room in all_rooms}
+        rooms_count = len(all_rooms)
+
+        records = []
+        monthly_totals = {
+            month_start.strftime("%Y-%m"): 0.0 for month_start in month_starts
+        }
+        for row in scan_rows:
+            moment = _parse_db_datetime(row.get("created_at"))
+            if moment is None or moment >= end:
+                continue
+            key = moment.strftime("%Y-%m")
+            if key in monthly_totals:
+                monthly_totals[key] += float(row.get("energy_kwh") or 0)
+            if moment >= start:
+                records.append(row)
 
         # Calculate section aggregates.
         section_stats = {}
@@ -2120,29 +2194,6 @@ async def admin_dashboard(
                 "energy_kwh": round(stats["energy_kwh"], 4),
                 "records": stats["records"],
             })
-
-        # Get all users with their info.
-        users_data = await db.select(
-            "classroom_users",
-            columns="id,username,status,last_seen,password_hash,section_id,assigned_room_id",
-            order="last_seen.desc",
-            limit=users_limit,
-            offset=users_offset,
-        )
-
-        # Get all rooms for assigned_room_id lookup.
-        room_ids = {
-            user.get("assigned_room_id")
-            for user in users_data
-            if user.get("assigned_room_id")
-        }
-        rooms = {}
-        if room_ids:
-            room_list = await db.select(
-                "classroom_rooms",
-                filters={"id": f"in.({','.join(map(str, room_ids))})"},
-            )
-            rooms = {room["id"]: _room_identity(room) for room in room_list}
 
         # Count records per user.
         user_record_counts = {}
@@ -2167,70 +2218,24 @@ async def admin_dashboard(
                 "records": record_count,
             })
 
-        # Paginated section list with record counts.
-        all_sections = await db.select(
-            "classroom_sections",
-            columns="id,name",
-            order="name",
-            limit=sections_limit,
-            offset=sections_offset,
-        )
-
-        # Summary counts for the overview cards.
-        rooms_count = len(await db.select("classroom_rooms", columns="id"))
-        users_total = len(await db.select("classroom_users", columns="id"))
-        pending_count = len(
-            await db.select(
-                "classroom_users",
-                columns="id",
-                filters={"status": "eq.pending"},
-            )
-        )
-        appliances = await db.select(
-            "appliances",
-            columns="id,name,wattage,quantity",
-            order="name",
-        )
-
-        # Count records per section.
+        # Count records per section and page the already-loaded catalog.
         section_record_counts = {}
         for row in records:
             sid = row.get("section_id")
             section_record_counts[sid] = section_record_counts.get(sid, 0) + 1
 
-        sections_list_full = []
-        for section in all_sections:
-            sections_list_full.append({
+        paged_sections = section_rows[
+            sections_offset : sections_offset + sections_limit
+        ]
+        sections_list_full = [
+            {
                 "id": section["id"],
                 "name": section["name"],
                 "records": section_record_counts.get(section["id"], 0),
-            })
+            }
+            for section in paged_sections
+        ]
 
-        # Six-month trend ending with the selected month, bucketed from one
-        # bounded read. Month stepping must use calendar months so no month
-        # is skipped by a fixed 32-day offset.
-        base_index = start.year * 12 + start.month - 1
-        month_starts = []
-        for offset in range(5, -1, -1):
-            year, month_number = divmod(base_index - offset, 12)
-            month_starts.append(datetime(year, month_number + 1, 1))
-        trend_rows = await _select_all(
-            db,
-            "usage_records",
-            columns="energy_kwh,created_at",
-            filters={"created_at": f"gte.{month_starts[0].isoformat()}"},
-            order="created_at,id",
-        )
-        monthly_totals = {
-            month_start.strftime("%Y-%m"): 0.0 for month_start in month_starts
-        }
-        for row in trend_rows:
-            moment = _parse_db_datetime(row.get("created_at"))
-            if moment is None or moment >= end:
-                continue
-            key = moment.strftime("%Y-%m")
-            if key in monthly_totals:
-                monthly_totals[key] += float(row.get("energy_kwh") or 0)
         monthly_data = [
             {"month": key, "kwh": round(value, 4)}
             for key, value in monthly_totals.items()

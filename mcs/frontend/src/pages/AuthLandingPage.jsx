@@ -39,11 +39,6 @@ export function AuthLandingPage({ initialMode = "login" }) {
   }, [initialMode]);
 
   useEffect(() => {
-    setMode(initialMode);
-    setError("");
-  }, [initialMode]);
-
-  useEffect(() => {
     if (mode !== "signup") {
       setUsernameStatus("idle");
       return undefined;
@@ -121,7 +116,7 @@ export function AuthLandingPage({ initialMode = "login" }) {
         } else if (data.username === "bernoulli" && data.role === "emc") {
           navigate("/mcs/user");
         } else if (data.role === "owner" && data.username && data.campus_slug) {
-          navigate(`/mcs/${data.username}/${data.campus_slug}/user`);
+          navigate(`/mcs/${data.username}/${data.campus_slug}/dashboard`);
         } else if (data.role === "emc" && data.owner_username && data.campus_slug) {
           navigate(`/mcs/${data.owner_username}/${data.campus_slug}/emc`);
         } else if (data.role === "owner" || (!data.role && data.workspace_name)) {

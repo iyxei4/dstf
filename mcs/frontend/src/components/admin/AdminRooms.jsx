@@ -3,6 +3,10 @@ import { Search, Building2 } from "lucide-react";
 import { roomKwh } from "../../utils/formatters";
 import { ROOM_TYPES } from "../../constants";
 
+function buildingFloorCount(building) {
+  return new Set(building.rooms.map((room) => room.floor)).size;
+}
+
 export function AdminRooms({
   roomsData,
   selectedRoomId,
@@ -50,6 +54,13 @@ export function AdminRooms({
   }
 
   const visibleRooms = flatRooms.filter(roomMatches);
+  const floorCounts = roomsData?.buildings.map(buildingFloorCount) ?? [];
+  const floorLabel =
+    floorCounts.length === 0
+      ? "no floors"
+      : floorCounts.every((count) => count === floorCounts[0])
+        ? `${floorCounts[0]} ${floorCounts[0] === 1 ? "floor" : "floors"} per building`
+        : `${Math.min(...floorCounts)}-${Math.max(...floorCounts)} floors per building`;
 
   useEffect(() => {
     if (!selectedRoom) {
@@ -73,7 +84,7 @@ export function AdminRooms({
         <div>
           <span className="eyebrow">CAMPUS ROOM MAP</span>
           <p>
-            60 rooms · four floors per building · consumption over
+            {flatRooms.length} rooms · {floorLabel} · consumption over
             the last 30 days
           </p>
         </div>
@@ -135,8 +146,8 @@ export function AdminRooms({
                       {
                         building.rooms.filter(roomMatches).length
                       }{" "}
-                      OF {building.rooms.length} ROOMS · 4
-                      FLOORS
+                      OF {building.rooms.length} ROOMS ·{" "}
+                      {buildingFloorCount(building)} FLOORS
                     </small>
                   </span>
                   <span className="building-average">
@@ -145,7 +156,8 @@ export function AdminRooms({
                   </span>
                 </div>
                 <div className="floor-stack">
-                  {[4, 3, 2, 1]
+                  {[...new Set(building.rooms.map((room) => room.floor))]
+                    .sort((left, right) => right - left)
                     .filter((floor) =>
                       building.rooms.some(
                         (room) =>
