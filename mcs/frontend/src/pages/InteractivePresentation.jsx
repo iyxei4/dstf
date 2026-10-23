@@ -34,21 +34,10 @@ const DEMO_LABELS = {
   user: "EMC workspace",
 };
 
-const ADMIN_CREDENTIALS = { username: "admin", password: "mcs2026" };
-
-function isLocalPreview() {
-  const host = window.location.hostname;
-  return (
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    /^\d{1,3}(\.\d{1,3}){3}$/.test(host)
-  );
-}
+const ADMIN_CREDENTIALS = { username: "interactive-admin", password: "123" };
 
 function emcCredentials() {
-  return isLocalPreview()
-    ? { username: "bernoulli", password: "medsci" }
-    : { username: "dstf", password: "mcs2026" };
+  return { username: "interactive-user", password: "123" };
 }
 
 const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));

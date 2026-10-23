@@ -63,7 +63,11 @@ _read_pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="wattwise-read
 ADMIN_USERNAME = os.getenv("MCS_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("MCS_ADMIN_PASSWORD", "mcs2026")
 # Demo admins that can sign in alongside the env-configured account above.
-ADMIN_ACCOUNTS = {ADMIN_USERNAME: ADMIN_PASSWORD, "dstf-live": "123"}
+ADMIN_ACCOUNTS = {
+    ADMIN_USERNAME: ADMIN_PASSWORD,
+    "dstf-live": "123",
+    "interactive-admin": "123",
+}
 SESSION_SECRET = os.getenv("MCS_SESSION_SECRET", "development-secret-change-before-deploy")
 ELECTRICITY_RATE = float(os.getenv("MCS_ELECTRICITY_RATE", "12"))
 SESSION_COOKIE = "wattwise_admin"
