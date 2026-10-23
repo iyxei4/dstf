@@ -98,11 +98,12 @@ export function AdminReports({
     }
     if (/(account|user|teacher)/.test(query)) {
       const allAccounts = dashboard?.users || [];
+      const totalAccounts = dashboard?.users_total ?? allAccounts.length;
       const activeAccounts = allAccounts.filter((u) => u.status === "active").length;
       const pendingUsers = allAccounts.filter((u) => u.status === "pending");
       return {
-        title: `${allAccounts.length} accounts`,
-        detail: `${activeAccounts} active, ${allAccounts.length - activeAccounts} inactive. ${pendingUsers.length} awaiting approval.`,
+        title: `${totalAccounts} accounts`,
+        detail: `${activeAccounts} active, ${totalAccounts - activeAccounts} inactive. ${dashboard?.pending_count ?? pendingUsers.length} awaiting approval.`,
       };
     }
     if (/(room|classroom)s?.*(count|how many)/.test(query)) {

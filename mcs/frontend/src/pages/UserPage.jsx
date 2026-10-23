@@ -9,11 +9,23 @@ export function UserPage() {
   // The /user/signup path opens the signup form directly; otherwise resume
   // the workspace when the account cookie is present, else show the login.
   const [view, setView] = useState(() => {
-    if (location.pathname === "/user/signup") return "signup";
+    if (location.pathname.endsWith("/user/signup")) return "signup";
     return localStorage.getItem("wattwise-user") ? "workspace" : "login";
   });
 
-  const handleSignIn = () => {
+  const handleSignIn = (account) => {
+    if (account?.role === "owner") {
+      // /mcs/user is the reporting workspace. Owners belong at /mcs/admin
+      // for the demo campus, or at their normal campus dashboard.
+      if (account.username === "admin" && account.campus_slug === "cshs") {
+        window.location.href = "/mcs/admin";
+      } else if (account.campus_slug) {
+        window.location.href = `/mcs/${account.username}/${account.campus_slug}/dashboard`;
+      } else {
+        window.location.href = "/onboarding";
+      }
+      return;
+    }
     setView("workspace");
   };
 

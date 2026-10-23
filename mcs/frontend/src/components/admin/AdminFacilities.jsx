@@ -69,7 +69,7 @@ export function AdminFacilities({
             <h2>User accounts</h2>
           </div>
           <span className="count-pill">
-            {dashboard?.users?.length || 0} accounts
+            {dashboard?.users_total ?? (dashboard?.users?.length || 0)} accounts
           </span>
         </div>
         {pendingUsers.length > 0 && (
@@ -77,7 +77,7 @@ export function AdminFacilities({
             <div className="approval-heading">
               <span className="eyebrow">REGISTRATION REQUESTS</span>
               <span className="count-pill pending-pill">
-                {pendingUsers.length} pending
+                {dashboard?.pending_count ?? pendingUsers.length} pending
               </span>
             </div>
             <div className="approval-list">
