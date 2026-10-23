@@ -58,7 +58,6 @@ export default function App() {
           <Route path="/admin" element={<AdminPage />} />
           {/* Demo admin: sign-in at /mcs/admin, console at /mcs/admin/dashboard. */}
           <Route path="/mcs/admin" element={<AdminSignInPage />} />
-          <Route path="/mcs/admin/" element={<Navigate to="/mcs/admin" replace />} />
           <Route path="/mcs/admin/dashboard/*" element={<AdminPage />} />
           <Route
             path="/mcs/user/*"
