@@ -413,24 +413,6 @@ export function BuildingIllustration() {
           <tspan x="680" dy="0">1.4 kWh</tspan>
           <animate attributeName="opacity" values="0.5;1;0.5" dur="3s" repeatCount="indefinite" begin="0.5s" />
         </text>
-        <text x="600" y="220" textAnchor="middle" className="floor-label">
-          <tspan x="600" dy="0">Floor 1</tspan>
-        </text>
-        <text x="600" y="160" textAnchor="middle" className="floor-label">
-          <tspan x="600" dy="0">Floor 2</tspan>
-        </text>
-        <text x="600" y="100" textAnchor="middle" className="floor-label">
-          <tspan x="600" dy="0">Floor 3</tspan>
-        </text>
-        <text x="600" y="40" textAnchor="middle" className="floor-label">
-          <tspan x="600" dy="0">Floor 4</tspan>
-        </text>
-        <text x="600" y="-20" textAnchor="middle" className="floor-label">
-          <tspan x="600" dy="0">Floor 5</tspan>
-        </text>
-        <text x="600" y="-80" textAnchor="middle" className="floor-label">
-          <tspan x="600" dy="0">Floor 6</tspan>
-        </text>
       </g>
 
       {/* Lightning bolt decorative - top right */}
