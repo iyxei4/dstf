@@ -33,7 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, load_only, selectinload
 
 # Import database and models
-from app.database import Base, get_engine, get_session_local
+from app.database import Base, SessionLocal, engine
 from app.db_models import Appliance, ClassroomRoom, ClassroomSection, ClassroomUser, UsageRecord, utc_now
 
 # Supabase REST API client for serverless environments
