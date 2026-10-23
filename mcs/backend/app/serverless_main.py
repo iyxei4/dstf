@@ -1535,7 +1535,12 @@ async def admin_dashboard(
         for sid, stats in section_stats.items():
             secs = await db.select("classroom_sections", columns="id,name", filters={"id": f"eq.{sid}"}, limit=1)
             name = secs[0]["name"] if secs else f"Section {sid}"
-            sections_list.append({"name": name, "energy_kwh": round(stats["energy_kwh"], 4), "records": stats["records"]})
+            sections_list.append({
+                "name": name,
+                "kwh": round(stats["energy_kwh"], 4),
+                "energy_kwh": round(stats["energy_kwh"], 4),
+                "records": stats["records"],
+            })
         
         # Get all users with their info
         users_data = await db.select(
@@ -1579,6 +1584,14 @@ async def admin_dashboard(
             limit=sections_limit,
             offset=sections_offset
         )
+
+        # Summary counts for the overview cards.
+        rooms_count = len(await db.select("classroom_rooms", columns="id"))
+        appliances = await db.select(
+            "appliances",
+            columns="id,name,wattage,quantity",
+            order="name",
+        )
         
         # Count records per section
         section_record_counts = {}
@@ -1620,6 +1633,10 @@ async def admin_dashboard(
             "sections_list": sections_list_full,
             "rate_php_per_kwh": ELECTRICITY_RATE,
             "monthly": monthly_data,
+            "rooms_count": rooms_count,
+            "section_count": len(all_sections),
+            "appliances": appliances,
+            "record_count": total_records,
         }
     except Exception as e:
         import traceback
