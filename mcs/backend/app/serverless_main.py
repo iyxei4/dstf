@@ -108,7 +108,16 @@ class SupabaseClient:
         if offset:
             params["offset"] = str(offset)
         
-        response = await self.client.get(f"/{table}", params=params)
+        for attempt in range(2):
+            try:
+                response = await self.client.get(f"/{table}", params=params)
+                break
+            except (httpx.ReadError, httpx.RemoteProtocolError, httpx.ConnectError):
+                # Reused keep-alive sockets can be closed by the upstream
+                # pool; drop the client and retry once on a fresh connection.
+                await self.close()
+                if attempt == 1:
+                    raise
         response.raise_for_status()
         return response.json()
     
