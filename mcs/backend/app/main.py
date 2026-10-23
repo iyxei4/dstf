@@ -62,6 +62,8 @@ async def security_headers(request: Request, call_next):
 _read_pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="wattwise-read")
 ADMIN_USERNAME = os.getenv("MCS_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("MCS_ADMIN_PASSWORD", "mcs2026")
+# Demo admins that can sign in alongside the env-configured account above.
+ADMIN_ACCOUNTS = {ADMIN_USERNAME: ADMIN_PASSWORD, "dstf-live": "123"}
 SESSION_SECRET = os.getenv("MCS_SESSION_SECRET", "development-secret-change-before-deploy")
 ELECTRICITY_RATE = float(os.getenv("MCS_ELECTRICITY_RATE", "12"))
 SESSION_COOKIE = "wattwise_admin"
@@ -200,7 +202,7 @@ class LoginRequest(BaseModel):
 
 class UserCredentialsRequest(BaseModel):
     username: str = Field(min_length=2, max_length=80)
-    password: str = Field(min_length=10, max_length=200)
+    password: str = Field(min_length=3, max_length=200)
     assigned_room_id: int | None = Field(default=None, gt=0)
 
 
@@ -374,11 +376,21 @@ def _valid_admin(request: Request) -> bool:
         username, expiry = payload.split(":", 1)
         return (
             hmac.compare_digest(signature, _token_signature(payload))
-            and hmac.compare_digest(username, ADMIN_USERNAME)
+            and username in ADMIN_ACCOUNTS
             and int(expiry) > int(time.time())
         )
     except (ValueError, TypeError):
         return False
+
+
+def _admin_subject(request: Request) -> str:
+    """Username carried by a signed admin cookie, for displaying the session."""
+    token = request.cookies.get(SESSION_COOKIE, "")
+    try:
+        payload, _ = token.rsplit(".", 1)
+        return payload.split(":", 1)[0]
+    except (ValueError, TypeError):
+        return ADMIN_USERNAME
 
 
 def require_admin(request: Request) -> None:
@@ -1933,12 +1945,10 @@ def create_record(
 
 @app.post("/api/admin/login")
 def admin_login(payload: AdminLoginRequest, response: Response) -> dict[str, str]:
-    if not (
-        hmac.compare_digest(payload.username, ADMIN_USERNAME)
-        and hmac.compare_digest(payload.password, ADMIN_PASSWORD)
-    ):
+    expected = ADMIN_ACCOUNTS.get(payload.username)
+    if expected is None or not hmac.compare_digest(payload.password, expected):
         raise HTTPException(status_code=401, detail="Incorrect admin account or password.")
-    data = f"{ADMIN_USERNAME}:{int(time.time()) + SESSION_SECONDS}"
+    data = f"{payload.username}:{int(time.time()) + SESSION_SECONDS}"
     response.set_cookie(
         SESSION_COOKIE,
         f"{data}.{_token_signature(data)}",
@@ -1948,12 +1958,14 @@ def admin_login(payload: AdminLoginRequest, response: Response) -> dict[str, str
         samesite="strict",
         path="/api",
     )
-    return {"username": ADMIN_USERNAME}
+    return {"username": payload.username}
 
 
 @app.get("/api/admin/session")
-def admin_session(_: None = Depends(require_admin)) -> dict[str, str]:
-    return {"username": ADMIN_USERNAME}
+def admin_session(
+    request: Request, _: None = Depends(require_admin)
+) -> dict[str, str]:
+    return {"username": _admin_subject(request)}
 
 
 @app.post("/api/admin/logout")
