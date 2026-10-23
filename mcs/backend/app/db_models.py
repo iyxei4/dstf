@@ -19,8 +19,10 @@ class ClassroomSection(Base):
     # while grade/section_name hold the parts; legacy rows may have them null.
     grade: Mapped[str | None] = mapped_column(String(4), nullable=True)
     section_name: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("classroom_users.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     records: Mapped[list["UsageRecord"]] = relationship(back_populates="section")
+    owner: Mapped["ClassroomUser | None"] = relationship(foreign_keys=[owner_id])
 
 
 class Appliance(Base):
@@ -42,7 +44,10 @@ class ClassroomUser(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    oauth_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    oauth_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # "pending" until an admin approves a self-registration; "active" to sign in.
     status: Mapped[str] = mapped_column(String(16), default="active", nullable=False)
     section_id: Mapped[int | None] = mapped_column(
@@ -51,10 +56,12 @@ class ClassroomUser(Base):
     assigned_room_id: Mapped[int | None] = mapped_column(
         ForeignKey("classroom_rooms.id"), nullable=True, index=True
     )
+    workspace_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    role: Mapped[str] = mapped_column(String(16), default="user", nullable=False)  # owner, emc, user
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     last_seen: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     records: Mapped[list["UsageRecord"]] = relationship(back_populates="user")
-    section: Mapped["ClassroomSection | None"] = relationship()
+    section: Mapped["ClassroomSection | None"] = relationship(foreign_keys=[section_id])
     assigned_room: Mapped["ClassroomRoom | None"] = relationship(
         back_populates="assigned_users", foreign_keys=[assigned_room_id]
     )
@@ -73,10 +80,12 @@ class ClassroomRoom(Base):
     room_type: Mapped[str] = mapped_column(String(20), default="classroom")
     custom_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     room_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("classroom_users.id"), nullable=True, index=True)
     records: Mapped[list["UsageRecord"]] = relationship(back_populates="room")
     assigned_users: Mapped[list[ClassroomUser]] = relationship(
         back_populates="assigned_room", foreign_keys="ClassroomUser.assigned_room_id"
     )
+    owner: Mapped["ClassroomUser | None"] = relationship(foreign_keys=[owner_id])
 
 
 class UsageRecord(Base):

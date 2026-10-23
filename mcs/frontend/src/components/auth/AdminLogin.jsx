@@ -38,7 +38,7 @@ export function AdminLogin({ onSignIn }) {
         right={
           <>
             <ThemeToggle darkMode={darkMode} onToggle={toggleTheme} />
-            <a className="topbar-link" href="/mcs">
+            <a className="topbar-link" href="/">
               <ArrowLeft size={15} /> All workspaces
             </a>
           </>
