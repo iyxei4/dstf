@@ -4,8 +4,6 @@ import {
   Mail,
   Lock,
   User,
-  Github,
-  Chrome,
   ArrowRight,
   Eye,
   EyeOff,
@@ -19,43 +17,79 @@ import { useTheme } from "../hooks/useTheme";
 import { Button, Input, Card, CardBody } from "../components/design";
 import { request } from "../utils/api";
 
-export function AuthLandingPage() {
+export function AuthLandingPage({ initialMode = "login" }) {
   const { darkMode, toggleTheme } = useTheme();
   const navigate = useNavigate();
-  const [mode, setMode] = useState("login"); // 'login' | 'signup'
+  const [mode, setMode] = useState(initialMode); // 'login' | 'signup'
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [usernameStatus, setUsernameStatus] = useState("idle");
 
   // Form state
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [fullName, setFullName] = useState("");
-  const [workspaceName, setWorkspaceName] = useState("");
+  const [campusName, setCampusName] = useState("");
   const [username, setUsername] = useState("");
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const oauthError = params.get("oauth_error");
-    if (oauthError) setError(oauthError);
-  }, []);
+    setMode(initialMode);
+    setError("");
+  }, [initialMode]);
 
-  const handleOAuthLogin = (provider) => {
-    window.location.href = `/api/auth/${provider}/login`;
-  };
+  useEffect(() => {
+    setMode(initialMode);
+    setError("");
+  }, [initialMode]);
+
+  useEffect(() => {
+    if (mode !== "signup") {
+      setUsernameStatus("idle");
+      return undefined;
+    }
+
+    const value = username.trim();
+    if (!value) {
+      setUsernameStatus("idle");
+      return undefined;
+    }
+    if (!/^[A-Za-z0-9._-]+$/.test(value)) {
+      setUsernameStatus("invalid");
+      return undefined;
+    }
+
+    setUsernameStatus("checking");
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      request(`/users/username-available?username=${encodeURIComponent(value)}`)
+        .then((data) => {
+          if (!cancelled) {
+            setUsernameStatus(data.available ? "available" : "taken");
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setUsernameStatus("idle");
+        });
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [mode, username]);
 
   const validateForm = () => {
     if (mode === "login") {
-      if (!email.trim()) return "Email is required";
+      if (!email.trim()) return "Email or username is required";
       if (!password) return "Password is required";
     } else {
-      if (!fullName.trim()) return "Full name is required";
-      if (!workspaceName.trim()) return "Workspace name is required";
       if (!username.trim()) return "Username is required";
       if (!/^[A-Za-z0-9._-]+$/.test(username.trim())) {
         return "Username can only use letters, numbers, dots, dashes, and underscores";
       }
+      if (usernameStatus === "taken") return "That username is already taken";
+      if (!campusName.trim()) return "Campus name is required";
       if (!email.trim()) return "Email is required";
       if (password.length < 8) return "Password must be at least 8 characters";
       if (password !== confirmPassword) return "Passwords do not match";
@@ -83,11 +117,11 @@ export function AuthLandingPage() {
         });
         localStorage.setItem("wattwise-user", data.username);
         if (data.username === "admin" && data.role === "owner") {
-          navigate("/mcs/admin");
+          navigate("/mcs/admin/dashboard");
         } else if (data.username === "bernoulli" && data.role === "emc") {
           navigate("/mcs/user");
         } else if (data.role === "owner" && data.username && data.campus_slug) {
-          navigate(`/mcs/${data.username}/${data.campus_slug}/dashboard`);
+          navigate(`/mcs/${data.username}/${data.campus_slug}/user`);
         } else if (data.role === "emc" && data.owner_username && data.campus_slug) {
           navigate(`/mcs/${data.owner_username}/${data.campus_slug}/emc`);
         } else if (data.role === "owner" || (!data.role && data.workspace_name)) {
@@ -98,20 +132,23 @@ export function AuthLandingPage() {
           navigate("/user");
         }
       } else {
-        // Create the owner account immediately so onboarding can save the
-        // workspace and hierarchy against an authenticated session.
-        const data = await request("/users/register-owner", {
+        // Create a regular user account with campus name
+        const data = await request("/users/register-user", {
           method: "POST",
           body: JSON.stringify({
-            full_name: fullName,
+            username: username.trim(),
+            campus_name: campusName.trim(),
             email,
             password,
-            workspace_name: workspaceName,
-            username: username.trim(),
           }),
         });
-        localStorage.setItem("wattwise-user", data.username);
-        navigate("/onboarding");
+        setError(data.message || "Account created. Please sign in after administrator approval.");
+        setMode("login");
+        setCampusName("");
+        setUsername("");
+        setEmail("");
+        setPassword("");
+        setConfirmPassword("");
       }
     } catch (err) {
       setError(err.message || "Something went wrong. Please try again.");
@@ -147,39 +184,20 @@ export function AuthLandingPage() {
           <h1>
             {mode === "login"
               ? "Welcome back."
-              : "Start your<br />workspace."}
+              : (
+                <>
+                  Create your
+                  <br />
+                  account.
+                </>
+              )}
           </h1>
           <p>
             {mode === "login"
               ? "Sign in to manage your buildings, rooms, and coordinators."
-              : "Create your workspace and begin monitoring energy in minutes."}
+              : "Pick a username and campus name. An admin will approve your access."}
           </p>
           <div className="auth-aside-line" />
-          <div className="auth-aside-oauth">
-            <p className="oauth-divider">Or continue with</p>
-            <div className="oauth-buttons">
-              <Button
-                variant="outline"
-                className="auth-oauth-button"
-                leftIcon={<Github size={18} />}
-                onClick={() => handleOAuthLogin("github")}
-                disabled={isLoading}
-                fullWidth
-              >
-                GitHub
-              </Button>
-              <Button
-                variant="outline"
-                className="auth-oauth-button"
-                leftIcon={<Chrome size={18} />}
-                onClick={() => handleOAuthLogin("google")}
-                disabled={isLoading}
-                fullWidth
-              >
-                Google
-              </Button>
-            </div>
-          </div>
         </div>
 
         <Card className="auth-form-card" variant="elevated">
@@ -189,7 +207,7 @@ export function AuthLandingPage() {
               <p className="form-intro">
                 {mode === "login"
                   ? "Use your email or username and password to access your dashboard."
-                  : "Enter your details to get started with WattWise."}
+                  : "Create your account with a username and campus name. An administrator must approve it before you can sign in."}
               </p>
 
               {error && (
@@ -201,23 +219,6 @@ export function AuthLandingPage() {
               {mode === "signup" && (
                 <>
                   <Input
-                    label="Full name"
-                    placeholder="John Doe"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    required
-                    icon={<User size={16} />}
-                  />
-                  <Input
-                    label="Workspace name"
-                    placeholder="Acme Corporation"
-                    value={workspaceName}
-                    onChange={(e) => setWorkspaceName(e.target.value)}
-                    required
-                    icon={<Building2 size={16} />}
-                    hint="This will be your organization's display name"
-                  />
-                  <Input
                     label="Username"
                     placeholder="juan"
                     value={username}
@@ -226,6 +227,15 @@ export function AuthLandingPage() {
                     icon={<User size={16} />}
                     autoComplete="username"
                     hint="Used in your campus link: /mcs/username/campus"
+                  />
+                  <Input
+                    label="Campus name"
+                    placeholder="CSHS"
+                    value={campusName}
+                    onChange={(e) => setCampusName(e.target.value)}
+                    required
+                    icon={<Building2 size={16} />}
+                    hint="Your campus/organization name (used in URL as slug)"
                   />
                 </>
               )}
@@ -283,7 +293,7 @@ export function AuthLandingPage() {
                 loading={isLoading}
                 rightIcon={<ArrowRight size={16} />}
               >
-                {mode === "login" ? "Sign in" : "Continue to onboarding"}
+                {mode === "login" ? "Sign in" : "Create account"}
               </Button>
 
               <p className="auth-switch">

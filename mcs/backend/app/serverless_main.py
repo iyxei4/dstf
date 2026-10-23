@@ -304,7 +304,7 @@ class LoginRequest(BaseModel):
 
 class UserCredentialsRequest(BaseModel):
     username: str = Field(min_length=2, max_length=80)
-    password: str = Field(min_length=10, max_length=200)
+    password: str = Field(min_length=6, max_length=200)
     assigned_room_id: int | None = Field(default=None, gt=0)
 
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowLeft, Zap, ArrowRight, Github, Chrome } from "lucide-react";
+import { ArrowLeft, Zap, ArrowRight } from "lucide-react";
 import { request } from "../../utils/api";
 import { Topbar } from "../ui/Topbar";
 import { ThemeToggle } from "../ui/ThemeToggle";
@@ -85,27 +85,6 @@ export function UserLogin({ onSignIn, onSignup }) {
               required
             />
           </label>
-          <div className="oauth-divider">
-            <span>or continue with</span>
-          </div>
-          <div className="oauth-buttons">
-            <a
-              className="oauth-button"
-              href="/api/auth/google/login"
-              title="Sign in with Google"
-            >
-              <Chrome size={18} />
-              <span>Google</span>
-            </a>
-            <a
-              className="oauth-button"
-              href="/api/auth/github/login"
-              title="Sign in with GitHub"
-            >
-              <Github size={18} />
-              <span>GitHub</span>
-            </a>
-          </div>
           <Notice>{notice}</Notice>
           <button
             className="button button-primary button-wide"

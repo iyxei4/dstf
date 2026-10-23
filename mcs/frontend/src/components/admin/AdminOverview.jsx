@@ -1,15 +1,14 @@
-import { Zap, Building2, Users, ClipboardList, ArrowDownRight } from "lucide-react";
+import { Zap, Activity, Users, ClipboardList, ArrowDownRight } from "lucide-react";
 import {
   ResponsiveContainer,
-  ComposedChart,
+  AreaChart,
   Area,
-  Line,
   CartesianGrid,
   XAxis,
   YAxis,
   Tooltip,
 } from "recharts";
-import { kwhText, money } from "../../utils/formatters";
+import { kwhText } from "../../utils/formatters";
 
 export function AdminOverview({ dashboard, month, activeAccounts, inactiveAccounts, pendingCount }) {
   const monthlyData = dashboard?.monthly || [];
@@ -32,17 +31,51 @@ export function AdminOverview({ dashboard, month, activeAccounts, inactiveAccoun
             })}
           </small>
         </article>
-        <article>
+        <article className="metric-chart">
           <span>
-            <span className="metric-icon amber">
-              <Building2 size={15} />
+            <span className="metric-icon green">
+              <Activity size={15} />
             </span>
-            EST. MONTHLY BILL
+            MONTHLY TREND
           </span>
-          <strong>{money(dashboard?.estimated_bill_php)}</strong>
-          <small className="metric-foot">
-            At {money(dashboard?.rate_php_per_kwh)} / kWh
-          </small>
+          <div style={{ width: "100%", height: 64, marginTop: 6 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart
+                data={monthlyData}
+                margin={{ top: 4, right: 0, left: 0, bottom: 0 }}
+              >
+                <defs>
+                  <linearGradient
+                    id="metricUsageFill"
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="1"
+                  >
+                    <stop offset="0%" stopColor="#278253" stopOpacity={0.3} />
+                    <stop offset="100%" stopColor="#278253" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <Tooltip
+                  formatter={(value) => [`${kwhText(value)} kWh`, "Energy"]}
+                  contentStyle={{
+                    borderRadius: 8,
+                    borderColor: "#e3e8df",
+                    fontSize: 12,
+                  }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="kwh"
+                  stroke="#278253"
+                  strokeWidth={2}
+                  fill="url(#metricUsageFill)"
+                  activeDot={{ r: 3 }}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+          <small className="metric-foot">Last {monthlyData.length || 0} months</small>
         </article>
         <article>
           <span>
@@ -83,10 +116,6 @@ export function AdminOverview({ dashboard, month, activeAccounts, inactiveAccoun
           </div>
         </div>
         <div className="consolidated-grid">
-          <div className="consolidated-item is-total">
-            <span>TOTAL ACCOUNTS</span>
-            <strong>{dashboard?.users_total ?? (dashboard?.users?.length || 0)}</strong>
-          </div>
           <div className="consolidated-item">
             <span>Classrooms</span>
             <strong>{dashboard?.rooms_count || 0}</strong>
@@ -110,13 +139,13 @@ export function AdminOverview({ dashboard, month, activeAccounts, inactiveAccoun
           <div className="panel-heading">
             <div>
               <span className="eyebrow">SIX-MONTH VIEW</span>
-              <h2>Energy & estimated bill</h2>
+              <h2>Energy consumption</h2>
             </div>
-            <span className="trend-unit">kWh / PHP</span>
+            <span className="trend-unit">kWh</span>
           </div>
           <div className="chart-area">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart
+              <AreaChart
                 data={monthlyData}
                 margin={{ top: 8, right: 4, left: -16, bottom: 0 }}
               >
@@ -148,23 +177,13 @@ export function AdminOverview({ dashboard, month, activeAccounts, inactiveAccoun
                   tick={{ fill: "#879087", fontSize: 11 }}
                 />
                 <YAxis
-                  yAxisId="energy"
                   axisLine={false}
                   tickLine={false}
                   tick={{ fill: "#879087", fontSize: 11 }}
                 />
-                <YAxis
-                  yAxisId="cost"
-                  orientation="right"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: "#a58b60", fontSize: 10 }}
-                />
                 <Tooltip
                   formatter={(value, name) => [
-                    name === "Energy"
-                      ? `${kwhText(value)} kWh`
-                      : money(value),
+                    `${kwhText(value)} kWh`,
                     name,
                   ]}
                   contentStyle={{
@@ -174,7 +193,6 @@ export function AdminOverview({ dashboard, month, activeAccounts, inactiveAccoun
                   }}
                 />
                 <Area
-                  yAxisId="energy"
                   type="monotone"
                   dataKey="kwh"
                   name="Energy"
@@ -183,27 +201,13 @@ export function AdminOverview({ dashboard, month, activeAccounts, inactiveAccoun
                   fill="url(#usageFill)"
                   activeDot={{ r: 4 }}
                 />
-                <Line
-                  yAxisId="cost"
-                  type="monotone"
-                  dataKey="bill"
-                  name="Est. bill"
-                  stroke="#e2a23b"
-                  strokeWidth={2}
-                  dot={{ r: 2, fill: "#e2a23b" }}
-                  activeDot={{ r: 4 }}
-                />
-              </ComposedChart>
+              </AreaChart>
             </ResponsiveContainer>
           </div>
           <div className="chart-legend">
             <span>
               <i className="legend-dot green-legend" /> ENERGY USE{" "}
               <strong>kWh</strong>
-            </span>
-            <span>
-              <i className="legend-dot amber-legend" /> EST. BILL{" "}
-              <strong>PHP</strong>
             </span>
           </div>
         </article>

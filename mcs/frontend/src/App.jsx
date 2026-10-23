@@ -10,7 +10,6 @@ import { ServerErrorPage } from "./pages/ServerErrorPage";
 import { TermsPage } from "./pages/TermsPage";
 import {
   CampusRoute,
-  DemoAdminRoute,
   DemoUserRoute,
 } from "./components/auth/CampusRoute";
 // Lazy-loaded pages for code splitting
@@ -22,6 +21,8 @@ const EmcWorkspace = lazy(() => import("./pages/EmcWorkspace").then((m) => ({ de
 const AdminDashboard = lazy(() => import("./pages/AdminDashboard").then((m) => ({ default: m.AdminDashboard })));
 const UserPage = lazy(() => import("./pages/UserPage").then((m) => ({ default: m.UserPage })));
 const AdminPage = lazy(() => import("./pages/AdminPage").then((m) => ({ default: m.AdminPage })));
+const InteractivePresentation = lazy(() => import("./pages/InteractivePresentation").then((m) => ({ default: m.InteractivePresentation })));
+const AdminSignInPage = lazy(() => import("./pages/AdminSignInPage").then((m) => ({ default: m.AdminSignInPage })));
 
 function LegacyMcsRedirect() {
   const location = useLocation();
@@ -43,7 +44,9 @@ export default function App() {
       <Suspense fallback={<div className="route-fallback" role="status" aria-live="polite">Loading…</div>}>
         <Routes>
           <Route path="/" element={<PublicLandingPage />} />
-          <Route path="/auth/*" element={<AuthLandingPage />} />
+          <Route path="/interactive" element={<InteractivePresentation />} />
+          <Route path="/auth/*" element={<AuthLandingPage initialMode="login" />} />
+          <Route path="/signup" element={<AuthLandingPage initialMode="signup" />} />
           <Route path="/onboarding" element={<OnboardingWizard />} />
           <Route path="/owner/*" element={<OwnerDashboard />} />
           <Route path="/administrator" element={<AdminDashboard />} />
@@ -53,17 +56,10 @@ export default function App() {
           <Route path="/user" element={<UserPage />} />
           <Route path="/user/signup" element={<UserPage />} />
           <Route path="/admin" element={<AdminPage />} />
-          <Route path="/mcs/admin" element={<AdminPage />} />
-          <Route path="/mcs/admin/" element={<AdminPage />} />
-          {/* Fixed demo routes. The private site-owner console stays at /admin. */}
-          <Route
-            path="/mcs/admin/*"
-            element={
-              <DemoAdminRoute>
-                <OwnerDashboard />
-              </DemoAdminRoute>
-            }
-          />
+          {/* Demo admin: sign-in at /mcs/admin, console at /mcs/admin/dashboard. */}
+          <Route path="/mcs/admin" element={<AdminSignInPage />} />
+          <Route path="/mcs/admin/" element={<Navigate to="/mcs/admin" replace />} />
+          <Route path="/mcs/admin/dashboard/*" element={<AdminPage />} />
           <Route
             path="/mcs/user/*"
             element={

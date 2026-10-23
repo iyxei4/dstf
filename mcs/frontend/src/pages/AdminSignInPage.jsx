@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Lock,
@@ -47,6 +47,7 @@ export function AdminSignInPage() {
         method: "POST",
         body: JSON.stringify({ username: username.trim(), password }),
       });
+      localStorage.setItem("wattwise-admin-session", "true");
       navigate("/mcs/admin/dashboard", { replace: true });
     } catch (err) {
       setError(err.message || "Invalid credentials. Please try again.");

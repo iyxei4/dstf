@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ArrowLeft, ArrowRight, UserPlus, Check, Github, Chrome } from "lucide-react";
+import { ArrowLeft, ArrowRight, UserPlus, Check } from "lucide-react";
 import { request } from "../../utils/api";
 import { groupSectionsByGrade } from "../../utils/formatters";
 import { Topbar } from "../ui/Topbar";
@@ -188,27 +188,6 @@ export function SignupPage({ onBack }) {
               minLength={8}
             />
           </label>
-          <div className="oauth-divider">
-            <span>or sign up with</span>
-          </div>
-          <div className="oauth-buttons">
-            <a
-              className="oauth-button"
-              href="/api/auth/google/login"
-              title="Sign up with Google"
-            >
-              <Chrome size={18} />
-              <span>Google</span>
-            </a>
-            <a
-              className="oauth-button"
-              href="/api/auth/github/login"
-              title="Sign up with GitHub"
-            >
-              <Github size={18} />
-              <span>GitHub</span>
-            </a>
-          </div>
           <Notice>{notice}</Notice>
           <button
             className="button button-primary button-wide"

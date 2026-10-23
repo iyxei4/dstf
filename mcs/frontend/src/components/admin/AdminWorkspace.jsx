@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { LogOut, Menu } from "lucide-react";
+import { Bell, LogOut, Menu } from "lucide-react";
 import { request, invalidateCache } from "../../utils/api";
 import { useTheme } from "../../hooks/useTheme";
 import { useLiveTables } from "../../hooks/useLiveTables";
+import { supabase } from "../../utils/supabase";
 import { Topbar } from "../ui/Topbar";
 import { ThemeToggle } from "../ui/ThemeToggle";
 import { Notice } from "../ui/Notice";
@@ -26,6 +27,7 @@ export function AdminWorkspace({ onSignOut }) {
   // busy gates the admin forms; child tabs own their own submit flows.
   const [busy] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [liveAlerts, setLiveAlerts] = useState([]);
   
   // Rooms state
   const [selectedRoomId, setSelectedRoomId] = useState(null);
@@ -151,6 +153,22 @@ export function AdminWorkspace({ onSignOut }) {
       }
     : null,
   );
+
+  // Live EMC activity: a user/coordinator switching an appliance on broadcasts
+  // here, so the admin sees it without refreshing the page.
+  useEffect(() => {
+    if (!supabase) return undefined;
+    const channel = supabase.channel("emc-activity");
+    channel.on("broadcast", { event: "appliance-enabled" }, ({ payload }) => {
+      setLiveAlerts((current) =>
+        [{ id: `${Date.now()}-${Math.random()}`, ...payload }, ...current].slice(0, 5),
+      );
+    });
+    channel.subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   async function signOut() {
     await request("/admin/logout", { method: "POST" }).catch(() => {});
@@ -382,6 +400,32 @@ export function AdminWorkspace({ onSignOut }) {
           </>
         }
       />
+      {liveAlerts.length > 0 && (
+        <div className="live-alerts" role="status" aria-live="polite">
+          {liveAlerts.map((alert) => (
+            <div className="live-alert" key={alert.id}>
+              <Bell size={14} />
+              <span>
+                <strong>{alert.username}</strong> turned on{" "}
+                <strong>{alert.appliance}</strong>
+                {alert.room ? ` in ${alert.room}` : ""}
+              </span>
+              <button
+                type="button"
+                className="live-alert__close"
+                onClick={() =>
+                  setLiveAlerts((current) =>
+                    current.filter((item) => item.id !== alert.id),
+                  )
+                }
+                aria-label="Dismiss notification"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {navOpen && (
         <div className="nav-scrim" onClick={() => setNavOpen(false)} />
       )}

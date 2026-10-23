@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Settings, LogOut, Clock3 } from "lucide-react";
 import { request, invalidateCache } from "../../utils/api";
 import { APPLIANCE_PRESETS, MAX_HOURS } from "../../constants";
@@ -11,6 +11,7 @@ import {
   getTodayLabel,
 } from "../../utils/formatters";
 import { useLiveTables } from "../../hooks/useLiveTables";
+import { supabase } from "../../utils/supabase";
 import { useTheme } from "../../hooks/useTheme";
 import { Topbar } from "../ui/Topbar";
 import { ThemeToggle } from "../ui/ThemeToggle";
@@ -58,6 +59,20 @@ export function UserWorkspace({ onSignOut }) {
   const [success, setSuccess] = useState("");
   const [busy, setBusy] = useState(false);
   const [accountSection, setAccountSection] = useState(null);
+  const activityChannelRef = useRef(null);
+
+  useEffect(() => {
+    if (!supabase) return undefined;
+    const channel = supabase.channel("emc-activity", {
+      config: { broadcast: { self: false } },
+    });
+    channel.subscribe();
+    activityChannelRef.current = channel;
+    return () => {
+      activityChannelRef.current = null;
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   async function loadWorkspace() {
     const [nextAppliances, nextRecords, session] = await Promise.all([
@@ -244,6 +259,18 @@ export function UserWorkspace({ onSignOut }) {
       JSON.stringify(nextRunning),
     );
     setNow(Date.now());
+    activityChannelRef.current?.send({
+      type: "broadcast",
+      event: "appliance-enabled",
+      payload: {
+        username: username || "EMC",
+        appliance: appliance.name,
+        room: assignedRoom
+          ? `${assignedRoom.building_name || ""} · Room ${assignedRoom.room_number}`
+          : "",
+        at: new Date().toISOString(),
+      },
+    });
   }
 
   async function stopAppliance(appliance) {
