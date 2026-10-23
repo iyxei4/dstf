@@ -1331,15 +1331,24 @@ async def set_user_credentials(
         if not rooms:
             raise HTTPException(status_code=404, detail="Room not found.")
     
+    password_hash = _hash_user_password(payload.password)
+    now = datetime.utcnow().isoformat()
     users = await db.select("classroom_users", filters={"username": f"ilike.{username}"}, limit=1)
     if not users:
-        new_user = await db.insert("classroom_users", {"username": username})
+        new_user = await db.insert("classroom_users", {
+            "username": username,
+            "password_hash": password_hash,
+            "assigned_room_id": payload.assigned_room_id,
+            "status": "active",
+            "created_at": now,
+            "last_seen": now,
+        })
         user = new_user[0] if new_user else None
     else:
         user = users[0]
     
     await db.update("classroom_users", 
-        {"password_hash": _hash_user_password(payload.password), "assigned_room_id": payload.assigned_room_id},
+        {"password_hash": password_hash, "assigned_room_id": payload.assigned_room_id},
         {"id": f"eq.{user['id']}"}
     )
     _invalidate_auth_cache(user["username"])
