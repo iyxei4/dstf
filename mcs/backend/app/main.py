@@ -65,6 +65,7 @@ ADMIN_PASSWORD = os.getenv("MCS_ADMIN_PASSWORD", "mcs2026")
 # Demo admins that can sign in alongside the env-configured account above.
 ADMIN_ACCOUNTS = {
     ADMIN_USERNAME: ADMIN_PASSWORD,
+    "dstf": "123",
     "dstf-live": "123",
     "interactive-admin": "123",
 }

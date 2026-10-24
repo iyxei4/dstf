@@ -702,7 +702,7 @@ a {
 }
 .user-summary {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -1554,14 +1554,22 @@ button.section-rank:focus-visible {
 .building-panel {
   min-width: 0;
   padding: 15px;
+  position: relative;
 }
 .building-heading {
+  width: 100%;
   min-height: 45px;
   display: flex;
   align-items: center;
   gap: 9px;
   padding-bottom: 12px;
+  border: 0;
   border-bottom: 1px solid var(--line);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 .building-icon {
   width: 32px;
@@ -1604,6 +1612,54 @@ button.section-rank:focus-visible {
 .building-average small {
   margin-top: 3px;
   font-size: 7px;
+}
+.building-summary {
+  position: absolute;
+  z-index: 6;
+  top: 66px;
+  left: 12px;
+  right: 12px;
+  padding: 12px 14px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 14px 30px rgba(24, 38, 28, 0.18);
+  pointer-events: none;
+}
+.building-summary-title {
+  display: block;
+  margin-bottom: 9px;
+  color: var(--muted);
+  font: 600 8px var(--mono);
+  letter-spacing: 0.08em;
+}
+.building-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px 12px;
+}
+.building-summary-grid > div {
+  min-width: 0;
+}
+.building-summary-grid span {
+  display: block;
+  color: var(--muted);
+  font: 7px var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.building-summary-grid strong {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--ink);
+  font: 700 13px var(--display);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.building-summary-grid strong small {
+  color: var(--muted);
+  font: 500 8px var(--mono);
 }
 .floor-stack {
   display: flex;
@@ -2877,6 +2933,9 @@ tbody tr:last-child td {
   }
   .building-grid {
     grid-template-columns: 1fr;
+  }
+  .building-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .room-map-heading {
     align-items: flex-start;

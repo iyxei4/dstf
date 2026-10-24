@@ -1,10 +1,31 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Search, Building2 } from "lucide-react";
 import { roomKwh } from "../../utils/formatters";
 import { ROOM_TYPES } from "../../constants";
 
 function buildingFloorCount(building) {
   return new Set(building.rooms.map((room) => room.floor)).size;
+}
+
+function buildingSummary(building) {
+  const reportingRooms = building.rooms.filter(
+    (room) => room.submission_count > 0,
+  );
+  return {
+    reportingRooms: reportingRooms.length,
+    applianceTypes: building.rooms.reduce(
+      (sum, room) => sum + room.appliance_count,
+      0,
+    ),
+    submissions: building.rooms.reduce(
+      (sum, room) => sum + room.submission_count,
+      0,
+    ),
+    topRoom: reportingRooms.reduce(
+      (top, room) => (!top || room.average_kwh > top.average_kwh ? room : top),
+      null,
+    ),
+  };
 }
 
 export function AdminRooms({
@@ -25,6 +46,8 @@ export function AdminRooms({
   saveRoomDetails,
   currentDetail,
 }) {
+  const [summaryOpen, setSummaryOpen] = useState("");
+  const [summaryHover, setSummaryHover] = useState("");
   const selectedRoom = roomsData?.buildings
     .flatMap((building) => building.rooms)
     .find((room) => room.id === selectedRoomId);
@@ -131,30 +154,103 @@ export function AdminRooms({
         <section className="building-grid">
           {roomsData.buildings
             .filter((building) => building.rooms.some(roomMatches))
-            .map((building) => (
-              <article
-                className="panel building-panel"
-                key={building.code}
-              >
-                <div className="building-heading">
-                  <span className="building-icon">
-                    <Building2 size={17} />
-                  </span>
-                  <span>
-                    <strong>{building.name}</strong>
-                    <small>
-                      {
-                        building.rooms.filter(roomMatches).length
-                      }{" "}
-                      OF {building.rooms.length} ROOMS ·{" "}
-                      {buildingFloorCount(building)} FLOORS
-                    </small>
-                  </span>
-                  <span className="building-average">
-                    {roomKwh(building.average_kwh_per_room)}
-                    <small>kWh avg</small>
-                  </span>
-                </div>
+            .map((building) => {
+              const summary = buildingSummary(building);
+              const summaryVisible =
+                (summaryHover || summaryOpen) === building.code;
+              return (
+                <article
+                  className="panel building-panel"
+                  key={building.code}
+                  onMouseEnter={() => setSummaryHover(building.code)}
+                  onMouseLeave={() => setSummaryHover("")}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setSummaryOpen("");
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="building-heading"
+                    onClick={() =>
+                      setSummaryOpen((open) =>
+                        open === building.code ? "" : building.code,
+                      )
+                    }
+                    aria-expanded={summaryVisible}
+                    title="Hover or tap for the building summary"
+                  >
+                    <span className="building-icon">
+                      <Building2 size={17} />
+                    </span>
+                    <span>
+                      <strong>{building.name}</strong>
+                      <small>
+                        {
+                          building.rooms.filter(roomMatches).length
+                        }{" "}
+                        OF {building.rooms.length} ROOMS ·{" "}
+                        {buildingFloorCount(building)} FLOORS
+                      </small>
+                    </span>
+                    <span className="building-average">
+                      {roomKwh(building.average_kwh_per_room)}
+                      <small>kWh avg</small>
+                    </span>
+                  </button>
+                  {summaryVisible && (
+                    <div className="building-summary" role="status">
+                      <span className="building-summary-title">
+                        LAST 30 DAYS
+                      </span>
+                      <div className="building-summary-grid">
+                        <div>
+                          <span>Total usage</span>
+                          <strong>
+                            {roomKwh(building.total_kwh)} <small>kWh</small>
+                          </strong>
+                        </div>
+                        <div>
+                          <span>Average room</span>
+                          <strong>
+                            {roomKwh(building.average_kwh_per_room)}{" "}
+                            <small>kWh</small>
+                          </strong>
+                        </div>
+                        <div>
+                          <span>Rooms reporting</span>
+                          <strong>
+                            {summary.reportingRooms}{" "}
+                            <small>of {building.rooms.length}</small>
+                          </strong>
+                        </div>
+                        <div>
+                          <span>Appliances used</span>
+                          <strong>
+                            {summary.applianceTypes}{" "}
+                            <small>across rooms</small>
+                          </strong>
+                        </div>
+                        <div>
+                          <span>Submissions</span>
+                          <strong>{summary.submissions}</strong>
+                        </div>
+                        <div>
+                          <span>Highest room</span>
+                          <strong>
+                            {summary.topRoom
+                              ? summary.topRoom.room_number
+                              : "—"}
+                            {summary.topRoom && (
+                              <small>
+                                {" "}
+                                {roomKwh(summary.topRoom.average_kwh)} kWh
+                              </small>
+                            )}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 <div className="floor-stack">
                   {[...new Set(building.rooms.map((room) => room.floor))]
                     .sort((left, right) => right - left)
@@ -200,8 +296,9 @@ export function AdminRooms({
                       </div>
                     ))}
                 </div>
-              </article>
-            ))}
+                </article>
+              );
+            })}
         </section>
       )}
       {selectedRoom && (

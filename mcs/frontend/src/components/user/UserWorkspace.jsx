@@ -19,7 +19,6 @@ import { Notice } from "../ui/Notice";
 import { PageFooter } from "../ui/PageFooter";
 import { SettingsPanel } from "./SettingsPanel";
 import { ManualEntryForm } from "./ManualEntryForm";
-import { FormulaBlock } from "./FormulaBlock";
 import { ApplianceTable } from "./ApplianceTable";
 import { RecentEntries } from "./RecentEntries";
 import { UserSummary } from "./UserSummary";
@@ -120,11 +119,6 @@ export function UserWorkspace({ onSignOut }) {
       (payload.new?.username ?? payload.old?.username) === username,
   );
 
-  const connectedWatts = appliances.reduce(
-    (sum, item) => sum + connectedWattsOf(item),
-    0,
-  );
-
   const applianceRows = appliances.map((appliance) => {
     const session = running[appliance.id];
     const elapsedSeconds = session
@@ -162,7 +156,6 @@ export function UserWorkspace({ onSignOut }) {
   const totalKwh = Number(
     records.reduce((sum, item) => sum + item.energy_kwh, 0).toFixed(4),
   );
-  const totalBill = totalKwh * ratePerKwh;
 
   async function addPresetAppliance(event) {
     event.preventDefault();
@@ -383,16 +376,6 @@ export function UserWorkspace({ onSignOut }) {
         right={
           <>
             <ThemeToggle darkMode={darkMode} onToggle={toggleTheme} />
-            <button
-              type="button"
-              className={`icon-button${showSettings ? " is-active" : ""}`}
-              onClick={() => setShowSettings((open) => !open)}
-              title="User settings"
-              aria-label="User settings"
-              aria-expanded={showSettings}
-            >
-              <Settings size={17} />
-            </button>
             <span className="account-chip">
               <span className="account-avatar">
                 {username.slice(0, 1).toUpperCase()}
@@ -444,7 +427,6 @@ export function UserWorkspace({ onSignOut }) {
         <section className="panel appliance-list-panel">
           <div className="panel-heading appliance-list-heading">
             <div>
-              <span className="eyebrow">LIVE APPLIANCE LOG</span>
               <h2>Classroom appliances</h2>
             </div>
             <button
@@ -513,11 +495,6 @@ export function UserWorkspace({ onSignOut }) {
                   : "Ask an administrator to assign a room"}
               </strong>
             </div>
-            <FormulaBlock
-              connectedWatts={connectedWatts}
-              applianceRows={applianceRows}
-              appliances={appliances}
-            />
           </div>
           <Notice>{notice}</Notice>
           <Notice kind="success">{success}</Notice>
@@ -543,9 +520,7 @@ export function UserWorkspace({ onSignOut }) {
         </section>
         <UserSummary
           totalKwh={totalKwh}
-          totalBill={totalBill}
           records={records}
-          ratePerKwh={ratePerKwh}
         />
       </section>
       <PageFooter
