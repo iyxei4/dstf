@@ -7,27 +7,6 @@ function buildingFloorCount(building) {
   return new Set(building.rooms.map((room) => room.floor)).size;
 }
 
-function buildingSummary(building) {
-  const reportingRooms = building.rooms.filter(
-    (room) => room.submission_count > 0,
-  );
-  return {
-    reportingRooms: reportingRooms.length,
-    applianceTypes: building.rooms.reduce(
-      (sum, room) => sum + room.appliance_count,
-      0,
-    ),
-    submissions: building.rooms.reduce(
-      (sum, room) => sum + room.submission_count,
-      0,
-    ),
-    topRoom: reportingRooms.reduce(
-      (top, room) => (!top || room.average_kwh > top.average_kwh ? room : top),
-      null,
-    ),
-  };
-}
-
 export function AdminRooms({
   roomsData,
   selectedRoomId,
@@ -47,8 +26,7 @@ export function AdminRooms({
   currentDetail,
   glowRoom,
 }) {
-  const [summaryOpen, setSummaryOpen] = useState("");
-  const [summaryHover, setSummaryHover] = useState("");
+  const [hoverRoom, setHoverRoom] = useState(null);
   const selectedRoom = roomsData?.buildings
     .flatMap((building) => building.rooms)
     .find((room) => room.id === selectedRoomId);
@@ -153,30 +131,9 @@ export function AdminRooms({
           {roomsData.buildings
             .filter((building) => building.rooms.some(roomMatches))
             .map((building) => {
-              const summary = buildingSummary(building);
-              const summaryVisible =
-                (summaryHover || summaryOpen) === building.code;
               return (
-                <article
-                  className="panel building-panel"
-                  key={building.code}
-                  onMouseEnter={() => setSummaryHover(building.code)}
-                  onMouseLeave={() => setSummaryHover("")}
-                  onKeyDown={(event) => {
-                    if (event.key === "Escape") setSummaryOpen("");
-                  }}
-                >
-                  <button
-                    type="button"
-                    className="building-heading"
-                    onClick={() =>
-                      setSummaryOpen((open) =>
-                        open === building.code ? "" : building.code,
-                      )
-                    }
-                    aria-expanded={summaryVisible}
-                    title="Hover or tap for the building summary"
-                  >
+                <article className="panel building-panel" key={building.code}>
+                  <div className="building-heading">
                     <span className="building-icon">
                       <Building2 size={17} />
                     </span>
@@ -194,61 +151,7 @@ export function AdminRooms({
                       {roomKwh(building.average_kwh_per_room)}
                       <small>kWh avg</small>
                     </span>
-                  </button>
-                  {summaryVisible && (
-                    <div className="building-summary" role="status">
-                      <span className="building-summary-title">
-                        LAST 30 DAYS
-                      </span>
-                      <div className="building-summary-grid">
-                        <div>
-                          <span>Total usage</span>
-                          <strong>
-                            {roomKwh(building.total_kwh)} <small>kWh</small>
-                          </strong>
-                        </div>
-                        <div>
-                          <span>Average room</span>
-                          <strong>
-                            {roomKwh(building.average_kwh_per_room)}{" "}
-                            <small>kWh</small>
-                          </strong>
-                        </div>
-                        <div>
-                          <span>Rooms reporting</span>
-                          <strong>
-                            {summary.reportingRooms}{" "}
-                            <small>of {building.rooms.length}</small>
-                          </strong>
-                        </div>
-                        <div>
-                          <span>Appliances used</span>
-                          <strong>
-                            {summary.applianceTypes}{" "}
-                            <small>across rooms</small>
-                          </strong>
-                        </div>
-                        <div>
-                          <span>Submissions</span>
-                          <strong>{summary.submissions}</strong>
-                        </div>
-                        <div>
-                          <span>Highest room</span>
-                          <strong>
-                            {summary.topRoom
-                              ? summary.topRoom.room_number
-                              : "—"}
-                            {summary.topRoom && (
-                              <small>
-                                {" "}
-                                {roomKwh(summary.topRoom.average_kwh)} kWh
-                              </small>
-                            )}
-                          </strong>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                  </div>
                 <div className="floor-stack">
                   {[...new Set(building.rooms.map((room) => room.floor))]
                     .sort((left, right) => right - left)
@@ -287,7 +190,10 @@ export function AdminRooms({
                                 }`}
                                 onClick={() => chooseRoom(room)}
                                 aria-pressed={selectedRoomId === room.id}
-                                title={`${room.display_name} · ${room.display_type} · ${roomKwh(room.average_kwh)} kWh / 30 days`}
+                                onMouseEnter={() => setHoverRoom(room.id)}
+                                onMouseLeave={() => setHoverRoom(null)}
+                                onFocus={() => setHoverRoom(room.id)}
+                                onBlur={() => setHoverRoom(null)}
                               >
                                 <strong>
                                   {room.room_number}
@@ -295,6 +201,47 @@ export function AdminRooms({
                                 <small>
                                   {roomKwh(room.average_kwh)}
                                 </small>
+                                {hoverRoom === room.id && (
+                                  <span className="room-summary" role="status">
+                                    <span className="room-summary-title">
+                                      {room.display_name} · {room.display_type} ·
+                                      Floor {room.floor}
+                                    </span>
+                                    <span className="room-summary-grid">
+                                      <span className="room-summary-cell">
+                                        <span className="room-summary-label">
+                                          30-day usage
+                                        </span>
+                                        <strong>
+                                          {roomKwh(room.average_kwh)}{" "}
+                                          <small>kWh</small>
+                                        </strong>
+                                      </span>
+                                      <span className="room-summary-cell">
+                                        <span className="room-summary-label">
+                                          Submissions
+                                        </span>
+                                        <strong>{room.submission_count}</strong>
+                                      </span>
+                                      <span className="room-summary-cell">
+                                        <span className="room-summary-label">
+                                          Appliance types
+                                        </span>
+                                        <strong>{room.appliance_count}</strong>
+                                      </span>
+                                      <span className="room-summary-cell">
+                                        <span className="room-summary-label">
+                                          Assigned
+                                        </span>
+                                        <strong>
+                                          {room.assigned_users.length
+                                            ? room.assigned_users.join(", ")
+                                            : "—"}
+                                        </strong>
+                                      </span>
+                                    </span>
+                                  </span>
+                                )}
                               </button>
                             ))}
                         </div>

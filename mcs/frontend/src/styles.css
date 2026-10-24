@@ -1610,53 +1610,68 @@ button.section-rank:focus-visible {
   margin-top: 3px;
   font-size: 7px;
 }
-.building-summary {
+.room-summary {
   position: absolute;
-  z-index: 6;
-  top: 66px;
-  left: 12px;
-  right: 12px;
-  padding: 12px 14px 13px;
+  z-index: 9;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  width: 210px;
+  padding: 10px 12px 11px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
   box-shadow: 0 14px 30px rgba(24, 38, 28, 0.18);
+  color: var(--ink);
+  text-align: left;
+  transform: translateX(-50%);
   pointer-events: none;
 }
-.building-summary-title {
+.room-summary-title {
   display: block;
-  margin-bottom: 9px;
+  margin-bottom: 8px;
   color: var(--muted);
   font: 600 8px var(--mono);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: normal;
 }
-.building-summary-grid {
+.room-summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 9px 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
 }
-.building-summary-grid > div {
+.room-summary-cell {
   min-width: 0;
 }
-.building-summary-grid span {
+.room-summary-label {
   display: block;
   color: var(--muted);
   font: 7px var(--mono);
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
-.building-summary-grid strong {
+.room-tile .room-summary strong {
   display: block;
   margin-top: 2px;
   overflow: hidden;
   color: var(--ink);
-  font: 700 13px var(--display);
+  font: 700 11px var(--display);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.building-summary-grid strong small {
+.room-tile .room-summary strong small {
   color: var(--muted);
   font: 500 8px var(--mono);
+  opacity: 1;
+}
+.floor-rooms .room-tile:first-child .room-summary {
+  left: 0;
+  transform: none;
+}
+.floor-rooms .room-tile:last-child .room-summary {
+  left: auto;
+  right: 0;
+  transform: none;
 }
 .floor-stack {
   display: flex;
@@ -1702,9 +1717,14 @@ button.section-rank:focus-visible {
   padding: 4px 2px;
   border: 1px solid transparent;
   border-radius: 4px;
+  position: relative;
   transition:
     border-color 120ms ease,
     transform 120ms ease;
+}
+.room-tile:hover,
+.room-tile:focus-visible {
+  z-index: 8;
 }
 .room-tile:hover {
   transform: translateY(-1px);
@@ -2942,9 +2962,6 @@ tbody tr:last-child td {
   }
   .building-grid {
     grid-template-columns: 1fr;
-  }
-  .building-summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .room-map-heading {
     align-items: flex-start;
