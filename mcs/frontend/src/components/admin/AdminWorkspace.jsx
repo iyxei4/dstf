@@ -44,12 +44,10 @@ export function AdminWorkspace({ onSignOut }) {
   
   // Reports state
   const [reportGroup, setReportGroup] = useState("day");
-  const [reportBuilding, setReportBuilding] = useState("");
-  const [reportRoomId, setReportRoomId] = useState("");
-  const [reportSectionId, setReportSectionId] = useState("");
-  const [reportApplianceId, setReportApplianceId] = useState("");
   const [reportQuery, setReportQuery] = useState("");
   const [reportAnswer, setReportAnswer] = useState(null);
+  const [roomReports, setRoomReports] = useState([]);
+  const [roomReportsLoading, setRoomReportsLoading] = useState(false);
   
   // Facilities state
   const [sectionName, setSectionName] = useState("");
@@ -69,6 +67,7 @@ export function AdminWorkspace({ onSignOut }) {
       `/admin/dashboard?month=${selectedMonth}&users_limit=200`,
     );
     setDashboard(data);
+    return data;
   }
 
   async function loadReports(overrides = {}) {
@@ -76,17 +75,52 @@ export function AdminWorkspace({ onSignOut }) {
       month: overrides.month ?? month,
       group: overrides.group ?? reportGroup,
     });
-    const filters = {
-      building: overrides.building ?? reportBuilding,
-      room_id: overrides.roomId ?? reportRoomId,
-      section_id: overrides.sectionId ?? reportSectionId,
-      appliance_id: overrides.applianceId ?? reportApplianceId,
-    };
-    Object.entries(filters).forEach(([key, value]) => {
-      if (value) params.set(key, String(value));
-    });
     const data = await request(`/admin/reports?${params.toString()}`);
     setReports(data);
+  }
+
+  async function loadRoomReports(overrides = {}) {
+    const selectedMonth = overrides.month ?? month;
+    // An active EMC room is a room with at least one approved account
+    // assigned to it, whether that account is role "emc" or an
+    // administrator-issued room account.
+    const activeRooms = new Map();
+    (overrides.users ?? dashboard?.users ?? []).forEach((user) => {
+      const room = user.assigned_room;
+      if (user.status !== "active" || !room) return;
+      if (!activeRooms.has(room.id)) {
+        activeRooms.set(room.id, { room, usernames: [] });
+      }
+      activeRooms.get(room.id).usernames.push(user.username);
+    });
+    const entries = [...activeRooms.values()].sort(
+      (a, b) =>
+        a.room.building_name.localeCompare(b.room.building_name) ||
+        a.room.room_number - b.room.room_number,
+    );
+    if (!entries.length) {
+      setRoomReports([]);
+      setRoomReportsLoading(false);
+      return;
+    }
+    setRoomReportsLoading(true);
+    try {
+      const results = await Promise.all(
+        entries.map(async (entry) => {
+          try {
+            const data = await request(
+              `/admin/reports?month=${selectedMonth}&group=day&room_id=${entry.room.id}`,
+            );
+            return { ...entry, report: data };
+          } catch (error) {
+            return { ...entry, report: null, error: error.message };
+          }
+        }),
+      );
+      setRoomReports(results);
+    } finally {
+      setRoomReportsLoading(false);
+    }
   }
 
   async function loadRooms() {
@@ -149,10 +183,15 @@ export function AdminWorkspace({ onSignOut }) {
 
   useLiveTables(["classroom_users", "usage_records"], admin
     ? () => {
-        loadDashboard(month).catch(() => {});
-        if (reports) {
-          loadReports({ group: reportGroup, month }).catch(() => {});
-        }
+        loadDashboard(month)
+          .then((data) => {
+            if (!reports) return;
+            return Promise.all([
+              loadReports({ group: reportGroup, month }),
+              loadRoomReports({ month, users: data.users }),
+            ]);
+          })
+          .catch(() => {});
       }
     : null,
   );
@@ -452,7 +491,11 @@ export function AdminWorkspace({ onSignOut }) {
           setTab={setTab}
           pendingCount={totalPending}
           admin={admin}
-          onReportsClick={() => loadReports().catch((error) => setNotice(error.message))}
+          onReportsClick={() =>
+            Promise.all([loadReports(), loadRoomReports()]).catch((error) =>
+              setNotice(error.message),
+            )
+          }
           onClose={() => setNavOpen(false)}
         />
         <section className="admin-main">
@@ -486,6 +529,9 @@ export function AdminWorkspace({ onSignOut }) {
                       group: reportGroup,
                       month: event.target.value,
                     }).catch((error) => setNotice(error.message));
+                    loadRoomReports({
+                      month: event.target.value,
+                    }).catch((error) => setNotice(error.message));
                   }
                 }}
               />
@@ -514,19 +560,13 @@ export function AdminWorkspace({ onSignOut }) {
                   reports={reports}
                   reportGroup={reportGroup}
                   setReportGroup={setReportGroup}
-                  reportBuilding={reportBuilding}
-                  setReportBuilding={setReportBuilding}
-                  reportRoomId={reportRoomId}
-                  setReportRoomId={setReportRoomId}
-                  reportSectionId={reportSectionId}
-                  setReportSectionId={setReportSectionId}
-                  reportApplianceId={reportApplianceId}
-                  setReportApplianceId={setReportApplianceId}
                   reportQuery={reportQuery}
                   setReportQuery={setReportQuery}
                   reportAnswer={reportAnswer}
                   setReportAnswer={setReportAnswer}
                   busy={busy}
+                  roomReports={roomReports}
+                  roomReportsLoading={roomReportsLoading}
                   setNotice={setNotice}
                   loadReports={loadReports}
                 />

@@ -4550,12 +4550,6 @@ a.button {
   margin-bottom: 16px;
   padding: 22px;
 }
-.report-criteria-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
-  gap: 14px;
-  margin-bottom: 18px;
-}
 .report-search {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;

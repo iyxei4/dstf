@@ -1,5 +1,5 @@
-import { Activity, Search } from "lucide-react";
-import { groupSectionsByGrade, kwhText } from "../../utils/formatters";
+import { ClipboardList, Search } from "lucide-react";
+import { kwhText } from "../../utils/formatters";
 import { REPORT_SUGGESTIONS } from "../../constants";
 import { ReportsPanel } from "./ReportsPanel";
 
@@ -10,19 +10,13 @@ export function AdminReports({
   reports,
   reportGroup,
   setReportGroup,
-  reportBuilding,
-  setReportBuilding,
-  reportRoomId,
-  setReportRoomId,
-  reportSectionId,
-  setReportSectionId,
-  reportApplianceId,
-  setReportApplianceId,
   reportQuery,
   setReportQuery,
   reportAnswer,
   setReportAnswer,
   busy,
+  roomReports,
+  roomReportsLoading,
   setNotice,
   loadReports,
 }) {
@@ -129,97 +123,82 @@ export function AdminReports({
 
   return (
     <>
-      <section className="panel report-controls">
+      <section className="panel table-panel">
         <div className="panel-heading">
           <div>
-            <span className="eyebrow">REPORT CRITERIA</span>
-            <h2>Generate a report</h2>
+            <span className="eyebrow">AUTO-CALCULATED</span>
+            <h2>Active EMC rooms</h2>
+            <p className="criteria-note">
+              {roomReports.length}{" "}
+              {roomReports.length === 1 ? "room" : "rooms"} · {month} · accounts
+              approved and assigned
+            </p>
           </div>
-          <button
-            type="button"
-            className="button button-primary"
-            disabled={busy}
-            onClick={() => loadReports().catch((error) => setNotice(error.message))}
-          >
-            <Activity size={15} /> Generate
-          </button>
         </div>
-        <div className="report-criteria-grid">
-          <label className="manual-field">
-            <span>Building</span>
-            <select
-              value={reportBuilding}
-              onChange={(event) => {
-                setReportBuilding(event.target.value);
-                setReportRoomId("");
-              }}
-            >
-              <option value="">All buildings</option>
-              {roomsData?.buildings.map((building) => (
-                <option key={building.code} value={building.code}>
-                  {building.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="manual-field">
-            <span>Room</span>
-            <select
-              value={reportRoomId}
-              onChange={(event) => setReportRoomId(event.target.value)}
-            >
-              <option value="">All rooms</option>
-              {roomsData?.buildings
-                .filter(
-                  (building) =>
-                    !reportBuilding || building.code === reportBuilding,
-                )
-                .map((building) => (
-                  <optgroup key={building.code} label={building.name}>
-                    {building.rooms.map((room) => (
-                      <option key={room.id} value={room.id}>
-                        {room.room_name || `Room ${room.room_number}`}
-                      </option>
-                    ))}
-                  </optgroup>
+        {roomReportsLoading ? (
+          <div className="loading-panel">Calculating room reports...</div>
+        ) : roomReports.length ? (
+          <div className="responsive-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>ROOM</th>
+                  <th>LOCATION</th>
+                  <th>SESSIONS</th>
+                  <th>ENERGY</th>
+                  <th>TOP APPLIANCE</th>
+                  <th>PEAK DAY</th>
+                  <th>PEAK HOUR</th>
+                </tr>
+              </thead>
+              <tbody>
+                {roomReports.map((entry) => (
+                  <tr key={entry.room.id}>
+                    <td>
+                      <strong>
+                        {entry.room.room_name ||
+                          `Room ${entry.room.room_number}`}
+                      </strong>
+                    </td>
+                    <td>
+                      {entry.room.building_name} · Floor {entry.room.floor}
+                    </td>
+                    <td>{entry.report ? entry.report.session_count : "—"}</td>
+                    <td>
+                      {entry.report ? (
+                        <strong className="energy-cell">
+                          {kwhText(entry.report.total_kwh)} kWh
+                        </strong>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td>
+                      {entry.report?.patterns?.top_appliance?.name || "—"}
+                    </td>
+                    <td>
+                      {entry.report?.patterns?.peak_weekday?.day || "—"}
+                    </td>
+                    <td>
+                      {entry.report?.patterns?.peak_hour?.hour || "—"}
+                    </td>
+                  </tr>
                 ))}
-            </select>
-          </label>
-          <label className="manual-field">
-            <span>Section</span>
-            <select
-              value={reportSectionId}
-              onChange={(event) => setReportSectionId(event.target.value)}
-            >
-              <option value="">All sections</option>
-              {groupSectionsByGrade(
-                dashboard?.sections_catalog || [],
-              ).map((group) => (
-                <optgroup key={group.label} label={group.label}>
-                  {group.items.map((section) => (
-                    <option key={section.id} value={section.id}>
-                      {section.name}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </label>
-          <label className="manual-field">
-            <span>Appliance</span>
-            <select
-              value={reportApplianceId}
-              onChange={(event) => setReportApplianceId(event.target.value)}
-            >
-              <option value="">All appliances</option>
-              {(dashboard?.appliances || []).map((appliance) => (
-                <option key={appliance.id} value={appliance.id}>
-                  {appliance.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="empty-state">
+            <span className="empty-mark">
+              <ClipboardList size={22} />
+            </span>
+            <strong>No active EMC rooms</strong>
+            <span>Assign an approved account to a room to include it here.</span>
+          </div>
+        )}
+      </section>
+      <section className="panel report-controls">
+        <span className="eyebrow">ASK THE REPORT</span>
         <form className="report-search" onSubmit={askReportQuery}>
           <Search size={16} aria-hidden="true" />
           <input
