@@ -261,6 +261,9 @@ export function UserWorkspace({ onSignOut }) {
         room: assignedRoom
           ? `${assignedRoom.building_name || ""} · Room ${assignedRoom.room_number}`
           : "",
+        roomId: assignedRoom?.id ?? null,
+        roomNumber: assignedRoom?.room_number ?? null,
+        buildingCode: assignedRoom?.building_code ?? null,
         at: new Date().toISOString(),
       },
     });

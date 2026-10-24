@@ -45,6 +45,7 @@ export function AdminRooms({
   busy,
   saveRoomDetails,
   currentDetail,
+  glowRoom,
 }) {
   const [summaryOpen, setSummaryOpen] = useState("");
   const [summaryHover, setSummaryHover] = useState("");
@@ -114,9 +115,6 @@ export function AdminRooms({
         <div className="room-status-legend">
           <span>
             <i className="room-dot average-dot" /> AVERAGE USE
-          </span>
-          <span title="High = 1.5x or more of the building's per-room average">
-            <i className="room-dot high-dot" /> HIGH CONSUMPTION
           </span>
         </div>
       </div>
@@ -279,7 +277,14 @@ export function AdminRooms({
                               <button
                                 type="button"
                                 key={room.id}
-                                className={`room-tile ${room.usage_status === "high" ? "room-high" : "room-average"}${selectedRoomId === room.id ? " room-selected" : ""}`}
+                                className={`room-tile room-average${selectedRoomId === room.id ? " room-selected" : ""}${
+                                  glowRoom &&
+                                  (glowRoom.id != null
+                                    ? room.id === glowRoom.id
+                                    : room.room_number === glowRoom.number)
+                                    ? " room-glow"
+                                    : ""
+                                }`}
                                 onClick={() => chooseRoom(room)}
                                 aria-pressed={selectedRoomId === room.id}
                                 title={`${room.display_name} · ${room.display_type} · ${roomKwh(room.average_kwh)} kWh / 30 days`}
@@ -311,14 +316,6 @@ export function AdminRooms({
                 {selectedRoom.building_name}
               </h2>
             </div>
-            <span
-              className={`room-status-pill ${selectedRoom.usage_status === "high" ? "pill-high" : "pill-average"}`}
-            >
-              <i />{" "}
-              {selectedRoom.usage_status === "high"
-                ? "HIGH CONSUMPTION"
-                : "AVERAGE USE"}
-            </span>
           </div>
           <form onSubmit={saveRoomDetails}>
             <table className="room-detail-table">

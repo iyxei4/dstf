@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Bell, LogOut, Menu } from "lucide-react";
 import { request, invalidateCache } from "../../utils/api";
 import { useTheme } from "../../hooks/useTheme";
@@ -28,6 +28,9 @@ export function AdminWorkspace({ onSignOut }) {
   const [busy] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [liveAlerts, setLiveAlerts] = useState([]);
+  // Room that should glow briefly after a coordinator switches an appliance on.
+  const [glowRoom, setGlowRoom] = useState(null);
+  const glowTimerRef = useRef(null);
   
   // Rooms state
   const [selectedRoomId, setSelectedRoomId] = useState(null);
@@ -163,9 +166,22 @@ export function AdminWorkspace({ onSignOut }) {
       setLiveAlerts((current) =>
         [{ id: `${Date.now()}-${Math.random()}`, ...payload }, ...current].slice(0, 5),
       );
+      // New clients send roomId; older ones only send the "… · Room 403" label.
+      const labelMatch = /Room\s+(\d+)/.exec(payload.room || "");
+      setGlowRoom({
+        id: payload.roomId ?? null,
+        number: Number.isFinite(Number(payload.roomNumber))
+          ? Number(payload.roomNumber)
+          : labelMatch
+            ? Number(labelMatch[1])
+            : null,
+      });
+      if (glowTimerRef.current) window.clearTimeout(glowTimerRef.current);
+      glowTimerRef.current = window.setTimeout(() => setGlowRoom(null), 8000);
     });
     channel.subscribe();
     return () => {
+      if (glowTimerRef.current) window.clearTimeout(glowTimerRef.current);
       supabase.removeChannel(channel);
     };
   }, []);
@@ -532,6 +548,7 @@ export function AdminWorkspace({ onSignOut }) {
                   setRoomName={setRoomName}
                   busy={busy}
                   saveRoomDetails={saveRoomDetails}
+                  glowRoom={glowRoom}
                   currentDetail={
                     roomDetail && roomDetail.id === selectedRoomId
                       ? roomDetail
