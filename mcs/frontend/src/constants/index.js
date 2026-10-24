@@ -37,7 +37,6 @@ export const REPORT_SUGGESTIONS = [
   "top appliance",
   "peak hour",
   "total kWh",
-  "estimated bill",
   "how many accounts",
 ];
 

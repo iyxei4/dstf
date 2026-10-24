@@ -1,5 +1,5 @@
 import { Activity, Search } from "lucide-react";
-import { groupSectionsByGrade, kwhText, money } from "../../utils/formatters";
+import { groupSectionsByGrade, kwhText } from "../../utils/formatters";
 import { REPORT_SUGGESTIONS } from "../../constants";
 import { ReportsPanel } from "./ReportsPanel";
 
@@ -84,12 +84,6 @@ export function AdminReports({
         ? { title: peak.day, value: `${kwhText(peak.kwh)} kWh`, detail: "Busiest weekday." }
         : { title: "No usage", detail: "Nothing recorded for this criteria." };
     }
-    if (/(bill|cost|peso|php|price|spend)/.test(query)) {
-      return {
-        title: money(reports?.total_bill ?? 0),
-        detail: `Estimated cost for ${reports?.session_count ?? 0} sessions at ${money(dashboard?.rate_php_per_kwh)}/kWh.`,
-      };
-    }
     if (/(total|how much|kwh|energy|consumption|sum)/.test(query)) {
       return {
         title: `${kwhText(reports?.total_kwh ?? 0)} kWh`,
@@ -124,7 +118,7 @@ export function AdminReports({
     return {
       title: "No match",
       detail:
-        "Try: highest consumption room · top appliance · peak hour · total kWh · estimated bill · how many accounts · rooms with usage",
+        "Try: highest consumption room · top appliance · peak hour · total kWh · how many accounts · rooms with usage",
     };
   }
 

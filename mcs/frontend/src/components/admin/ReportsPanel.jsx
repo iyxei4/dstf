@@ -1,5 +1,5 @@
 import { ClipboardList } from "lucide-react";
-import { kwhText, money } from "../../utils/formatters";
+import { kwhText } from "../../utils/formatters";
 
 export function ReportsPanel({ reports, group, month, criteria, onGroupChange }) {
   const patterns = reports?.patterns;
@@ -61,8 +61,7 @@ export function ReportsPanel({ reports, group, month, criteria, onGroupChange })
               <p className="criteria-note">
                 Filtered by {activeCriteria.join(" · ")} ·{" "}
                 {reports?.session_count ?? 0} sessions ·{" "}
-                {kwhText(reports?.total_kwh ?? 0)} kWh ·{" "}
-                {money(reports?.total_bill ?? 0)}
+                {kwhText(reports?.total_kwh ?? 0)} kWh
               </p>
             ) : null}
           </div>
@@ -87,7 +86,6 @@ export function ReportsPanel({ reports, group, month, criteria, onGroupChange })
                     <th>PERIOD</th>
                     <th>SESSIONS</th>
                     <th>ENERGY</th>
-                    <th>EST. COST</th>
                     <th>TOP APPLIANCE</th>
                   </tr>
                 </thead>
@@ -101,7 +99,6 @@ export function ReportsPanel({ reports, group, month, criteria, onGroupChange })
                           {kwhText(bucket.kwh)} kWh
                         </strong>
                       </td>
-                      <td>{money(bucket.bill)}</td>
                       <td>{bucket.top_appliance || "—"}</td>
                     </tr>
                   ))}
