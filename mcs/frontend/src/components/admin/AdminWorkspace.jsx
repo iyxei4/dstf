@@ -491,11 +491,17 @@ export function AdminWorkspace({ onSignOut }) {
           setTab={setTab}
           pendingCount={totalPending}
           admin={admin}
-          onReportsClick={() =>
-            Promise.all([loadReports(), loadRoomReports()]).catch((error) =>
-              setNotice(error.message),
-            )
-          }
+          onReportsClick={() => {
+            // If the dashboard is still loading, wait for the roster before
+            // deciding which rooms have an approved account assigned.
+            const usersReady = dashboard
+              ? Promise.resolve(dashboard.users)
+              : loadDashboard(month).then((data) => data.users);
+            return Promise.all([
+              loadReports(),
+              usersReady.then((users) => loadRoomReports({ users })),
+            ]).catch((error) => setNotice(error.message));
+          }}
           onClose={() => setNavOpen(false)}
         />
         <section className="admin-main">
